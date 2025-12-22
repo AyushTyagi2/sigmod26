@@ -20,6 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Backend API (Docker)
+
+To run the Poligras FastAPI service inside Docker:
+
+```powershell
+cd <repo-root>
+docker build -t poligras-api .
+docker run --rm -p 8000:8000 -v ${PWD}\backend\dataset:/app/backend/dataset poligras-api
+```
+
+The volume mount keeps datasets and generated summaries on your host machine while the container serves the API at `http://localhost:8000/poligras`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

@@ -6,6 +6,22 @@ import copy
 import pickle
 import numpy as np
 import networkx as nx
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+from .output_types import (
+    Meta,
+    PoligrasOutput,
+    Stats,
+    InitialGraph,
+    SummaryGraph,
+    SummaryEdge,
+    SummaryNode,
+)
+
+
+MAX_INITIAL_SNAPSHOT_NODES = 200
 
 
 class Poligras(torch.nn.Module):
@@ -48,16 +64,23 @@ class PoligrasRunner(object):
 
         self.args = args
 
+        backend_root = Path(__file__).resolve().parent
+        self.dataset_dir = backend_root / 'dataset' / self.args.dataset
+        if not self.dataset_dir.exists():
+            raise FileNotFoundError(
+                f"Dataset assets for '{self.args.dataset}' not found at {self.dataset_dir.resolve()}"
+            )
+
         ## load graph structure
-        g_file = open('./dataset/' + self.args.dataset + '/' + self.args.dataset + '_graph', 'rb')
-        loaded_graph = pickle.load(g_file)
-        g_file.close()
+        graph_path = self.dataset_dir / f"{self.args.dataset}_graph"
+        with graph_path.open('rb') as g_file:
+            loaded_graph = pickle.load(g_file)
         self.init_graph = loaded_graph['G']
 
         ## load node features
-        g_file = open('./dataset/' + self.args.dataset + '/' + self.args.dataset + '_feat', 'rb')
-        loaded_data = pickle.load(g_file)
-        g_file.close()
+        feat_path = self.dataset_dir / f"{self.args.dataset}_feat"
+        with feat_path.open('rb') as g_file:
+            loaded_data = pickle.load(g_file)
         self.node_feat = loaded_data['feat']
         self.args.feat_dim = self.node_feat.size()[1]
         # print('feat size: ', self.args.feat_dim)
@@ -546,12 +569,13 @@ class PoligrasRunner(object):
 
 
 #---------------------------------------------------------------------------------------------------------------------------------
-    def encode(self):
+    def encode(self) -> PoligrasOutput:
         ## encode superedges after finishing the graph summarization iterations
         print("\n-------Model encoding---------.\n")
 
         self.superEdges, self_edge = [], []  ## to store the superedges and the initial self-loop edges on initial nodes
         self.correctionSet_plus, self.correctionSet_minus = [], [] ## to store the correction set edges to add and to delete from the supergraph when restoring the initial graph
+        summary_edge_payload: Dict[Tuple[int, int], SummaryEdge] = {}
 
         finished_pair, i_dx = {}, 0
         self.superNodes_dict = self.best_superNodes_dict
@@ -584,8 +608,17 @@ class PoligrasRunner(object):
                 if(len(Edge_AB) <= (len(self.superNodes_dict[A])*len(self.superNodes_dict[B])/2)):
                     self.correctionSet_plus += Edge_AB
                 else:
+                    edge_weight = len(Edge_AB)
+                    possible_edges = len(self.superNodes_dict[A]) * len(self.superNodes_dict[B])
+                    density = (edge_weight / possible_edges) if possible_edges else 0.0
                     self.superEdges.append((A, B))# += 1#
                     self.correctionSet_minus += Pi_E_AB
+                    summary_edge_payload[(A, B)] = {
+                        'source': str(A),
+                        'target': str(B),
+                        'weight': float(edge_weight),
+                        'density': float(density),
+                    }
 
 
             Edge_AA = []
@@ -606,8 +639,17 @@ class PoligrasRunner(object):
             if(len(Edge_AA) <= (len(self.superNodes_dict[A])*(len(self.superNodes_dict[A])-1)/4)):
                 self.correctionSet_plus += Edge_AA
             else:
+                edge_weight = len(Edge_AA)
+                possible_edges = len(self.superNodes_dict[A]) * (len(self.superNodes_dict[A]) - 1) / 2
+                density = (edge_weight / possible_edges) if possible_edges else 0.0
                 self.superEdges.append((A, A))
                 self.correctionSet_minus += Pi_E_AA
+                summary_edge_payload[(A, A)] = {
+                    'source': str(A),
+                    'target': str(A),
+                    'weight': float(edge_weight),
+                    'density': float(density),
+                }
 
             i_dx += 1
 
@@ -619,7 +661,153 @@ class PoligrasRunner(object):
         print("\n-------SuperNode encoding ended, total reward is {}---------.\n".format(self.init_graph.number_of_edges() - len(self_edge) - len(self.superEdges) - len(self.correctionSet_plus) - len(self.correctionSet_minus)))
 
 
-        f = open('./{}_graph_summary'.format(self.args.dataset), 'wb')
-        pickle.dump({'superNodes_dict': self.superNodes_dict, 'superEdge_list': self.superEdges, 'self_edge_list': self_edge, 'correctionSet_plus_list': self.correctionSet_plus, 'correctionSet_minus_list': self.correctionSet_minus}, f)
-        f.close()
+        summary_path = self.dataset_dir / f"{self.args.dataset}_graph_summary"
+        with summary_path.open('wb') as f:
+            pickle.dump(
+                {
+                    'superNodes_dict': self.superNodes_dict,
+                    'superEdge_list': self.superEdges,
+                    'self_edge_list': self_edge,
+                    'correctionSet_plus_list': self.correctionSet_plus,
+                    'correctionSet_minus_list': self.correctionSet_minus,
+                },
+                f,
+            )
+
+        summary_nodes = self._build_summary_nodes()
+        summary_graph_payload = self._build_summary_graph(summary_nodes, summary_edge_payload)
+        initial_graph_payload = self._build_initial_snapshot()
+        stats_payload = self._build_stats(summary_graph_payload, len(self_edge))
+        meta_payload = self._build_meta()
+
+        result: PoligrasOutput = {
+            'meta': meta_payload,
+            'stats': stats_payload,
+            'graphs': {
+                'initial': initial_graph_payload,
+                'summary': summary_graph_payload,
+            }
+        }
+
+        return result
+
+
+    def _build_summary_nodes(self) -> List[SummaryNode]:
+        summary_nodes: List[SummaryNode] = []
+        for supernode_id, members in self.superNodes_dict.items():
+            summary_nodes.append({
+                'id': str(supernode_id),
+                'size': len(members),
+            })
+        return summary_nodes
+
+
+    def _build_summary_graph(
+        self,
+        summary_nodes: List[SummaryNode],
+        summary_edge_payload: Dict[Tuple[int, int], SummaryEdge],
+    ) -> SummaryGraph:
+        return {
+            'directed': self.init_graph.is_directed(),
+            'sampled': False,
+            'node_count': len(summary_nodes),
+            'edge_count': len(summary_edge_payload),
+            'nodes': summary_nodes,
+            'edges': list(summary_edge_payload.values()),
+        }
+
+
+    def _build_initial_snapshot(self, max_nodes: int = MAX_INITIAL_SNAPSHOT_NODES) -> InitialGraph:
+        ordered_nodes = list(self.init_graph.nodes())
+        sampled_nodes = ordered_nodes[:max_nodes]
+        sampled = len(sampled_nodes) < len(ordered_nodes)
+        induced_subgraph = self.init_graph.subgraph(sampled_nodes).copy()
+
+        nodes_payload = [
+            {
+                'id': self._coerce_node_id(node),
+                'degree': int(self.init_graph.degree(node)),
+            }
+            for node in induced_subgraph.nodes()
+        ]
+
+        edges_payload = []
+        for source, target, data in induced_subgraph.edges(data=True):
+            weight = float(data.get('weight', 1.0))
+            edges_payload.append({
+                'source': self._coerce_node_id(source),
+                'target': self._coerce_node_id(target),
+                'weight': weight,
+            })
+
+        return {
+            'directed': self.init_graph.is_directed(),
+            'sampled': sampled,
+            'node_count': induced_subgraph.number_of_nodes(),
+            'edge_count': induced_subgraph.number_of_edges(),
+            'nodes': nodes_payload,
+            'edges': edges_payload,
+        }
+
+
+    def _build_stats(self, summary_graph: SummaryGraph, self_loop_edges: int) -> Stats:
+        initial_nodes = self.init_graph.number_of_nodes()
+        initial_edges = self.init_graph.number_of_edges()
+        correction_edges = len(self.correctionSet_plus) + len(self.correctionSet_minus)
+        summary_supernodes = summary_graph['node_count']
+        summary_superedges = summary_graph['edge_count']
+        numerator = summary_supernodes + summary_superedges
+        denominator = initial_nodes + initial_edges
+        compression_ratio = (numerator / denominator) if denominator else 0.0
+        total_reward = self.init_graph.number_of_edges() - self_loop_edges - len(self.superEdges) - len(self.correctionSet_plus) - len(self.correctionSet_minus)
+
+        stats: Stats = {
+            'initial': {
+                'nodes': initial_nodes,
+                'edges': initial_edges,
+            },
+            'summary': {
+                'supernodes': summary_supernodes,
+                'superedges': summary_superedges,
+                'correction_edges': correction_edges,
+            },
+            'compression_ratio': compression_ratio,
+            'total_reward': total_reward,
+        }
+
+        if summary_supernodes:
+            stats['avg_supernode_size'] = initial_nodes / summary_supernodes
+
+        stats['correction_breakdown'] = {
+            'positive': len(self.correctionSet_plus),
+            'negative': len(self.correctionSet_minus),
+        }
+
+        return stats
+
+
+    def _build_meta(self) -> Meta:
+        timestamp = datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+        return {
+            'dataset': self.args.dataset,
+            'algorithm': 'Poligras',
+            'run_id': timestamp,
+            'parameters': {
+                'counts': self.args.counts,
+                'group_size': self.args.group_size,
+                'hidden_size1': self.args.hidden_size1,
+                'hidden_size2': self.args.hidden_size2,
+                'lr': self.args.lr,
+                'dropout': self.args.dropout,
+            },
+        }
+
+
+    def _coerce_node_id(self, node) -> int:
+        if node in self.init_nd_idx:
+            return int(self.init_nd_idx[node])
+        try:
+            return int(node)
+        except (TypeError, ValueError):
+            return int(hash(node))
 
