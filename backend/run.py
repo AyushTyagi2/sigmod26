@@ -1,17 +1,25 @@
 import argparse
-from model import PoligrasRunner
+import json
+from pathlib import Path
+
+from .model import PoligrasRunner
 
 
 def run_poligras(args):
-    """
-    Core execution logic (CLI + API safe)
-    """
+    """Train Poligras and serialize a structured summary payload."""
     executer = PoligrasRunner(args)
     executer.fit()
-    executer.encode()
+    result = executer.encode()
 
-    # We will extract artifacts AFTER encode()
-    return executer
+    backend_root = Path(__file__).resolve().parent
+    output_dir = backend_root / "dataset" / args.dataset
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "output.json"
+    with output_path.open('w', encoding='utf-8') as outfile:
+        json.dump(result, outfile, indent=2)
+
+    print(f"Poligras artifacts written to {output_path.resolve()}")
+    return result
 
 
 def parse_args():
