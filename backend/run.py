@@ -2,7 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .model import PoligrasRunner
+from backend.model import PoligrasRunner
 
 
 def run_poligras(args):
