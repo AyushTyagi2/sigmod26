@@ -5,6 +5,8 @@ import dynamic from "next/dynamic";
 import ControlPanel from "@/components/ControlPanel";
 import MetricsPanel from "@/components/MetricsPanel";
 import { MOCK_DATASETS, MOCK_STEPS_MAP } from "@/lib/mockData";
+import { convertPoligrasOutputToSteps } from "@/lib/poligrasConverter";
+import { PoligrasOutput, GraphStep } from "@/types";
 
 const GraphCanvas = dynamic(() => import("@/components/GraphCanvas"), {
     ssr: false,
@@ -17,13 +19,37 @@ const GraphCanvas = dynamic(() => import("@/components/GraphCanvas"), {
 
 export default function VisualizationPage() {
     const [selectedDatasetId, setSelectedDatasetId] = useState(MOCK_DATASETS[0].id);
-    const [steps, setSteps] = useState(MOCK_STEPS_MAP[MOCK_DATASETS[0].id]);
+    const [steps, setSteps] = useState<GraphStep[]>(MOCK_STEPS_MAP[MOCK_DATASETS[0].id]);
     const [currentStep, setCurrentStep] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [showCorrections, setShowCorrections] = useState(true);
+    const [isLoadingRealData, setIsLoadingRealData] = useState(false);
 
     const selectedDataset =
         MOCK_DATASETS.find((d) => d.id === selectedDatasetId) || MOCK_DATASETS[0];
+
+    useEffect(() => {
+        // Try to load real data from session storage if available
+        const lastDatasetId = sessionStorage.getItem("lastDatasetId");
+        const poligrasOutput = sessionStorage.getItem("poligrasOutput");
+        
+        if (lastDatasetId && poligrasOutput) {
+            try {
+                const output: PoligrasOutput = JSON.parse(poligrasOutput);
+                const convertedSteps = convertPoligrasOutputToSteps(output);
+                if (convertedSteps.length > 0) {
+                    setSteps(convertedSteps);
+                    setSelectedDatasetId(lastDatasetId);
+                    setCurrentStep(0);
+                    setIsLoadingRealData(true);
+                    // Clear from session storage to avoid reusing stale data
+                    sessionStorage.removeItem("poligrasOutput");
+                }
+            } catch (error) {
+                console.error("Failed to load real data:", error);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         if (!isPlaying) return;
@@ -45,6 +71,7 @@ export default function VisualizationPage() {
         setIsPlaying(false);
         // Load the correct dataset's steps
         setSteps(MOCK_STEPS_MAP[id] || MOCK_STEPS_MAP["astro-ph"]);
+        setIsLoadingRealData(false);
     }, []);
 
     const handleReset = useCallback(() => {
