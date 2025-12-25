@@ -161,6 +161,15 @@ export default function UploadDataset() {
       setStatus("complete");
       setIsProcessing(false);
       
+      // Save output to session storage for visualization page
+      sessionStorage.setItem("poligrasOutput", JSON.stringify(result));
+      sessionStorage.setItem("lastDatasetId", datasetId);
+      
+      // Redirect to visualization page after short delay
+      setTimeout(() => {
+        window.location.href = "/visualize";
+      }, 1500);
+      
     } catch (error) {
       console.error("Processing failed:", error);
       setStatus("processing_error");
