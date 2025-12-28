@@ -1,0 +1,34 @@
+{
+  "dataset_id": "dataset_1766950098131",
+  "meta": {
+    "dataset": "dataset_1766950098131",
+    "algorithm": "Poligras",
+    "run_id": "2025-12-28T19:30:14Z",
+    "parameters": {
+      "counts": 100,
+      "group_size": 200,
+      "hidden_size1": 64,
+      "hidden_size2": 32,
+      "lr": 0.001,
+      "dropout": 0.0
+    }
+  },
+  "stats": {
+    "initial": {
+      "nodes": 18772,
+      "edges": 198110
+    },
+    "summary": {
+      "supernodes": 16187,
+      "superedges": 118882,
+      "correction_edges": 33357
+    },
+    "compression_ratio": 0.6227764406451435,
+    "total_reward": 45811,
+    "avg_supernode_size": 1.1596960523877184,
+    "correction_breakdown": {
+      "positive": 29261,
+      "negative": 4096
+    }
+  }
+}
