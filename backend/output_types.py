@@ -106,6 +106,22 @@ class GraphCollection(TypedDict):
     summary: SummaryGraph
 
 
+class MergeStepStats(TypedDict):
+    step_index: int
+    reward: float
+    summarisation_ratio: float
+    node_count: int
+    edge_count: int
+    supernode_count: int
+    avg_degree: float
+
+
+class MergeStep(TypedDict):
+    n1: str
+    n2: str
+    stats: MergeStepStats
+
+
 class PoligrasOutputBase(TypedDict):
     stats: Stats
     graphs: GraphCollection
@@ -113,6 +129,7 @@ class PoligrasOutputBase(TypedDict):
 
 class PoligrasOutput(PoligrasOutputBase, total=False):
     meta: Meta
+    timeline: List[MergeStep]
 
 
 __all__ = [
@@ -122,6 +139,8 @@ __all__ = [
     "InitialGraph",
     "InitialNode",
     "InitialStats",
+    "MergeStep",
+    "MergeStepStats",
     "Meta",
     "ParameterSet",
     "PoligrasOutput",

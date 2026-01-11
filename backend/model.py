@@ -77,6 +77,11 @@ class PoligrasRunner(object):
             loaded_graph = pickle.load(g_file)
         self.init_graph = loaded_graph['G']
 
+        # cache initial counts and initialize per-merge timeline container
+        self.initial_node_count = self.init_graph.number_of_nodes()
+        self.initial_edge_count = self.init_graph.number_of_edges()
+        self.timeline: List[Dict] = []
+
         ## load node features
         feat_path = self.dataset_dir / f"{self.args.dataset}_feat"
         with feat_path.open('rb') as g_file:
@@ -440,6 +445,38 @@ class PoligrasRunner(object):
             self.superNodes_dict[n1] += self.superNodes_dict[n2]
             self.superNodes_dict.pop(n2)
 
+            # record per-merge stats snapshot for frontend timeline
+            step_index = len(self.timeline)
+            supernode_count = len(self.superNodes_dict)
+            edge_count = self.curr_graph.number_of_edges()
+            node_count = self.initial_node_count
+
+            denom = float(self.initial_node_count + self.initial_edge_count)
+            summarisation_ratio = 0.0
+            if denom:
+                summarisation_ratio = (supernode_count + edge_count) / denom
+
+            avg_degree = 0.0
+            if supernode_count > 0:
+                if self.init_graph.is_directed():
+                    avg_degree = edge_count / float(supernode_count)
+                else:
+                    avg_degree = 2.0 * edge_count / float(supernode_count)
+
+            self.timeline.append({
+                'n1': str(n1),
+                'n2': str(n2),
+                'stats': {
+                    'step_index': step_index,
+                    'reward': float(curr_reward),
+                    'summarisation_ratio': float(summarisation_ratio),
+                    'node_count': int(node_count),
+                    'edge_count': int(edge_count),
+                    'supernode_count': int(supernode_count),
+                    'avg_degree': float(avg_degree),
+                },
+            })
+
         return curr_reward
 
 #---------------------------------------------------------------------------------------------------------------------------------
@@ -448,6 +485,9 @@ class PoligrasRunner(object):
 
         # total_rewards = 0 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+
+        # reset timeline for this run
+        self.timeline = []
 
         self.max_reward_by_inner_iter = 0## "max_reward_by_inner_iter" is to help judge and execute the group re-partitioning
         self.model.train()
@@ -686,7 +726,8 @@ class PoligrasRunner(object):
             'graphs': {
                 'initial': initial_graph_payload,
                 'summary': summary_graph_payload,
-            }
+            },
+            'timeline': self.timeline,
         }
 
         return result
