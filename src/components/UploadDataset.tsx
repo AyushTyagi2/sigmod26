@@ -1,11 +1,10 @@
 "use client";
 import { useState, useRef } from "react";
-import { Upload, File, CheckCircle, XCircle, Loader2, Folder, Play, Settings, Zap } from "lucide-react";
+import { Upload, File, CheckCircle, XCircle, Loader2, Folder, Play, Settings } from "lucide-react";
 
-export default function FastUploadDataset() {
+export default function UploadDataset() {
   const [files, setFiles] = useState([]);
   const [progress, setProgress] = useState(0);
-  const [uploadSpeed, setUploadSpeed] = useState(0);
   const [status, setStatus] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -14,8 +13,9 @@ export default function FastUploadDataset() {
   const [datasetId, setDatasetId] = useState("");
   const [showConfig, setShowConfig] = useState(false);
   const [processingResult, setProcessingResult] = useState(null);
-  const [currentFile, setCurrentFile] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   
+  // Poligras configuration
   const [config, setConfig] = useState({
     counts: 100,
     group_size: 200,
@@ -29,9 +29,6 @@ export default function FastUploadDataset() {
 
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
-  const abortControllerRef = useRef(null);
-
-  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks (adjust based on network)
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return "0 Bytes";
@@ -39,10 +36,6 @@ export default function FastUploadDataset() {
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + " " + sizes[i];
-  };
-
-  const formatSpeed = (bytesPerSecond) => {
-    return formatFileSize(bytesPerSecond) + "/s";
   };
 
   const getTotalSize = () => {
@@ -68,6 +61,7 @@ export default function FastUploadDataset() {
       setStatus("");
       setProgress(0);
       setProcessingResult(null);
+      setErrorMessage("");
     }
   };
 
@@ -77,69 +71,7 @@ export default function FastUploadDataset() {
     setStatus("");
     setProgress(0);
     setProcessingResult(null);
-  };
-
-  const uploadFileInChunks = async (file, sharedDatasetId) => {
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    const fileName = file.name;
-    let uploadedBytes = 0;
-    const startTime = Date.now();
-
-    setCurrentFile(fileName);
-
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      const start = chunkIndex * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end);
-
-      const formData = new FormData();
-      formData.append('chunk', chunk);
-      formData.append('fileName', fileName);
-      formData.append('chunkIndex', chunkIndex.toString());
-      formData.append('totalChunks', totalChunks.toString());
-      formData.append('datasetId', sharedDatasetId);
-
-      try {
-        abortControllerRef.current = new AbortController();
-        
-        const response = await fetch("http://localhost:8000/upload-chunk", {
-          method: "POST",
-          body: formData,
-          signal: abortControllerRef.current.signal
-        });
-
-        if (!response.ok) {
-          throw new Error(`Chunk ${chunkIndex} upload failed`);
-        }
-
-        uploadedBytes += (end - start);
-        const currentProgress = (uploadedBytes / file.size) * 100;
-        setProgress(currentProgress);
-
-        const elapsedSeconds = (Date.now() - startTime) / 1000;
-        const speed = uploadedBytes / elapsedSeconds;
-        setUploadSpeed(speed);
-
-      } catch (error) {
-        if (error.name === 'AbortError') {
-          throw new Error('Upload cancelled');
-        }
-        throw error;
-      }
-    }
-
-    // Finalize the upload
-    const finalizeResponse = await fetch("http://localhost:8000/finalize-upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fileName, datasetId: sharedDatasetId })
-    });
-
-    if (!finalizeResponse.ok) {
-      throw new Error("Failed to finalize upload");
-    }
-
-    return await finalizeResponse.json();
+    setErrorMessage("");
   };
 
   const handleUpload = async () => {
@@ -148,78 +80,65 @@ export default function FastUploadDataset() {
     setStatus("uploading");
     setIsUploading(true);
     setProgress(0);
-    setUploadSpeed(0);
+    setErrorMessage("");
+
+    const formData = new FormData();
+    
+    files.forEach(file => {
+      formData.append('files', file);
+    });
 
     try {
-      let finalDatasetId = null;
-      
-      // Check if any file is large enough for chunking
-      const hasLargeFile = files.some(f => f.size > 10 * 1024 * 1024);
-      
-      if (hasLargeFile) {
-        // Generate a single dataset ID for chunked uploads
-        const generatedDatasetId = `dataset_${Date.now()}`;
-        
-        // Upload files sequentially
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          
-          if (file.size > 10 * 1024 * 1024) {
-            const result = await uploadFileInChunks(file, generatedDatasetId);
-            finalDatasetId = result.dataset_id;
-          } else {
-            // Small file - still use chunked upload with same dataset ID
-            const result = await uploadFileInChunks(file, generatedDatasetId);
-            finalDatasetId = result.dataset_id;
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
           }
-          
-          // Update progress for multiple files
-          setProgress(((i + 1) / files.length) * 100);
-        }
-      } else {
-        // All files are small - use direct upload
-        const formData = new FormData();
-        files.forEach(file => {
-          formData.append('files', file);
+          return prev + 10;
         });
-        
-        const response = await fetch("http://localhost:8000/upload-multiple", {
-          method: "POST",
-          body: formData,
-        });
+      }, 200);
 
-        if (!response.ok) throw new Error("Upload failed");
-        
-        const data = await response.json();
-        finalDatasetId = data.dataset_id;
-        setProgress(100);
+      const response = await fetch("http://localhost:8000/upload-multiple", {
+        method: "POST",
+        body: formData,
+        mode: 'cors',
+      });
+
+      clearInterval(progressInterval);
+      setProgress(100);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Upload failed" }));
+        setErrorMessage(errorData.detail || "Upload failed");
+        setStatus("error");
+        setIsUploading(false);
+        return;
       }
 
-      setDatasetId(finalDatasetId);
+      const data = await response.json();
+      setDatasetId(data.dataset_id);
       setStatus("upload_success");
       setIsUploading(false);
+      
+      // Only store the dataset ID, not the full result
+      try {
+        sessionStorage.setItem("lastDatasetId", data.dataset_id);
+      } catch (e) {
+        // If sessionStorage fails, continue anyway
+        console.warn("Could not save to sessionStorage:", e);
+      }
+      
+      // Show config modal
       setShowConfig(true);
-      setCurrentFile("");
       
     } catch (error) {
-      console.error("Upload failed:", error);
+      const errorMsg = error.message || "Upload failed. Please check if the backend is running.";
+      setErrorMessage(errorMsg);
       setStatus("error");
       setIsUploading(false);
       setProgress(0);
-      setUploadSpeed(0);
-      setCurrentFile("");
     }
-  };
-
-  const cancelUpload = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setIsUploading(false);
-    setStatus("cancelled");
-    setProgress(0);
-    setUploadSpeed(0);
-    setCurrentFile("");
   };
 
   const handleRunPoligras = async () => {
@@ -228,6 +147,7 @@ export default function FastUploadDataset() {
     setIsProcessing(true);
     setStatus("processing");
     setShowConfig(false);
+    setErrorMessage("");
 
     try {
       const response = await fetch("http://localhost:8000/poligras", {
@@ -239,27 +159,42 @@ export default function FastUploadDataset() {
           dataset: datasetId,
           ...config
         }),
+        mode: 'cors',
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error("Processing error:", errorData);
+        const errorData = await response.json().catch(() => ({ detail: "Processing failed" }));
+        setErrorMessage(errorData.detail || "Processing failed");
         setStatus("processing_error");
         setIsProcessing(false);
         return;
       }
-      
+
       const result = await response.json();
       setProcessingResult(result);
       setStatus("complete");
       setIsProcessing(false);
       
-      setTimeout(() => {
-        window.location.href = "/visualize";
-      }, 1500);
+      // Store only essential data, avoid storing large results
+      try {
+        // Store a summary instead of the full result to avoid quota issues
+        const summary = {
+          dataset_id: datasetId,
+          timestamp: new Date().toISOString(),
+          has_result: true
+        };
+        sessionStorage.setItem("poligrasSummary", JSON.stringify(summary));
+        sessionStorage.setItem("lastDatasetId", datasetId);
+      } catch (e) {
+        // If sessionStorage quota exceeded, just continue
+        console.warn("Could not save to sessionStorage:", e);
+      }
+      
+      // Auto-redirect removed - user can manually go to visualization
       
     } catch (error) {
-      console.error("Processing failed:", error);
+      const errorMsg = error.message || "Processing failed. Please check if the backend is running.";
+      setErrorMessage(errorMsg);
       setStatus("processing_error");
       setIsProcessing(false);
     }
@@ -269,13 +204,12 @@ export default function FastUploadDataset() {
     setFiles([]);
     setStatus("");
     setProgress(0);
-    setUploadSpeed(0);
     setIsUploading(false);
     setIsProcessing(false);
     setDatasetId("");
     setShowConfig(false);
     setProcessingResult(null);
-    setCurrentFile("");
+    setErrorMessage("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -287,15 +221,15 @@ export default function FastUploadDataset() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
+        {/* Header */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <Zap className="w-8 h-8 text-yellow-400" />
-            <h1 className="text-4xl font-bold text-white">Fast Dataset Upload</h1>
-          </div>
-          <p className="text-slate-400">Optimized chunked upload for large files (up to 100GB+)</p>
+          <h1 className="text-4xl font-bold text-white mb-2">Dataset Upload & Processing</h1>
+          <p className="text-slate-400">Upload your datasets and run Poligras analysis</p>
         </div>
 
+        {/* Main Card */}
         <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl shadow-2xl border border-slate-700 p-8">
+          {/* Upload Mode Toggle */}
           <div className="flex gap-2 mb-6">
             <button
               onClick={() => setUploadMode("file")}
@@ -323,6 +257,7 @@ export default function FastUploadDataset() {
             </button>
           </div>
 
+          {/* Drop Zone */}
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -384,7 +319,7 @@ export default function FastUploadDataset() {
                   </p>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Supports files up to 100GB+ • Chunked upload with resume capability
+                  Supports CSV, ZIP, TAR, PKL, PT, and PTH files
                 </p>
               </div>
             ) : (
@@ -408,7 +343,7 @@ export default function FastUploadDataset() {
                   <div className="max-h-32 overflow-y-auto text-left space-y-1">
                     {files.map((file, idx) => (
                       <p key={idx} className="text-xs text-slate-400 truncate">
-                        • {file.webkitRelativePath || file.name} ({formatFileSize(file.size)})
+                        • {file.webkitRelativePath || file.name}
                       </p>
                     ))}
                   </div>
@@ -428,41 +363,23 @@ export default function FastUploadDataset() {
             )}
           </div>
 
+          {/* Progress Bar */}
           {isUploading && (
-            <div className="mt-6 space-y-3">
-              <div className="flex justify-between items-start text-sm">
-                <div>
-                  <span className="text-slate-400">Uploading...</span>
-                  {currentFile && (
-                    <p className="text-xs text-slate-500 mt-1 truncate max-w-xs">
-                      Current: {currentFile}
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <div className="text-white font-semibold">{progress.toFixed(1)}%</div>
-                  {uploadSpeed > 0 && (
-                    <div className="text-xs text-green-400">{formatSpeed(uploadSpeed)}</div>
-                  )}
-                </div>
+            <div className="mt-6 space-y-2">
+              <div className="flex justify-between text-sm text-slate-400">
+                <span>Uploading...</span>
+                <span>{progress}%</span>
               </div>
-              <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
+              <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-blue-500 via-cyan-500 to-green-500 h-full transition-all duration-300 ease-out relative"
+                  className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full transition-all duration-300 ease-out"
                   style={{ width: `${progress}%` }}
-                >
-                  <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
-                </div>
+                />
               </div>
-              <button
-                onClick={cancelUpload}
-                className="w-full py-2 px-4 rounded-lg text-sm font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 transition-colors"
-              >
-                Cancel Upload
-              </button>
             </div>
           )}
 
+          {/* Processing Indicator */}
           {isProcessing && (
             <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg flex items-center space-x-3">
               <Loader2 className="w-5 h-5 text-blue-400 animate-spin flex-shrink-0" />
@@ -473,6 +390,7 @@ export default function FastUploadDataset() {
             </div>
           )}
 
+          {/* Status Messages */}
           {status === "upload_success" && !showConfig && !isProcessing && (
             <div className="mt-6 p-4 bg-green-500/10 border border-green-500/30 rounded-lg flex items-start space-x-3">
               <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
@@ -493,8 +411,13 @@ export default function FastUploadDataset() {
                 <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
                   <p className="text-green-400 font-semibold mb-1">Processing complete!</p>
-                  <p className="text-sm text-slate-300 mb-3">Redirecting to visualization...</p>
+                  <p className="text-sm text-slate-300 mb-3">Analysis finished successfully. You can now visualize the results.</p>
                 </div>
+              </div>
+              <div className="bg-slate-700/50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                <pre className="text-xs text-slate-300 whitespace-pre-wrap">
+                  {JSON.stringify(processingResult, null, 2)}
+                </pre>
               </div>
             </div>
           )}
@@ -505,22 +428,25 @@ export default function FastUploadDataset() {
               <div>
                 <p className="text-red-400 font-semibold mb-1">Upload failed</p>
                 <p className="text-sm text-slate-300">
-                  Please check your connection and try again
+                  {errorMessage || "Please check if the backend is running on http://localhost:8000"}
                 </p>
               </div>
             </div>
           )}
 
-          {status === "cancelled" && (
-            <div className="mt-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-start space-x-3">
-              <XCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+          {status === "processing_error" && (
+            <div className="mt-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start space-x-3">
+              <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-yellow-400 font-semibold mb-1">Upload cancelled</p>
-                <p className="text-sm text-slate-300">You can start a new upload anytime</p>
+                <p className="text-red-400 font-semibold mb-1">Processing failed</p>
+                <p className="text-sm text-slate-300">
+                  {errorMessage || "An error occurred during analysis. Check the backend logs for details."}
+                </p>
               </div>
             </div>
           )}
 
+          {/* Upload Button */}
           {!datasetId && (
             <button
               onClick={handleUpload}
@@ -541,13 +467,14 @@ export default function FastUploadDataset() {
                 </span>
               ) : (
                 <span className="flex items-center justify-center space-x-2">
-                  <Zap className="w-5 h-5" />
-                  <span>Fast Upload {uploadMode === "folder" ? "Folder" : "Files"}</span>
+                  <Upload className="w-5 h-5" />
+                  <span>Upload {uploadMode === "folder" ? "Folder" : "Files"}</span>
                 </span>
               )}
             </button>
           )}
 
+          {/* Action Buttons after Upload */}
           {datasetId && !isProcessing && status !== "complete" && (
             <div className="mt-6 flex gap-3">
               <button
@@ -568,6 +495,7 @@ export default function FastUploadDataset() {
             </div>
           )}
 
+          {/* Reset Button after Complete */}
           {status === "complete" && (
             <button
               onClick={resetUpload}
@@ -577,11 +505,13 @@ export default function FastUploadDataset() {
             </button>
           )}
 
+          {/* Info Text */}
           <p className="mt-6 text-center text-xs text-slate-500">
-            Chunked upload with automatic resume • Optimized for files up to 100GB+
+            Large uploads may take several minutes. Please don't close this window.
           </p>
         </div>
 
+        {/* Configuration Modal */}
         {showConfig && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 p-8 max-w-md w-full max-h-[90vh] overflow-y-auto">
@@ -596,25 +526,104 @@ export default function FastUploadDataset() {
               </div>
 
               <div className="space-y-4">
-                {Object.entries(config).map(([key, value]) => (
-                  <div key={key}>
-                    <label className="block text-sm font-medium text-slate-300 mb-2 capitalize">
-                      {key.replace(/_/g, ' ')}
-                    </label>
-                    <input
-                      type="number"
-                      step={key === 'lr' || key === 'weight_decay' ? '0.0001' : key === 'dropout' ? '0.1' : '1'}
-                      value={value}
-                      onChange={(e) => setConfig({
-                        ...config, 
-                        [key]: key.includes('lr') || key.includes('dropout') || key.includes('weight') 
-                          ? parseFloat(e.target.value) 
-                          : parseInt(e.target.value)
-                      })}
-                      className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                ))}
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Counts
+                  </label>
+                  <input
+                    type="number"
+                    value={config.counts}
+                    onChange={(e) => setConfig({...config, counts: parseInt(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Group Size
+                  </label>
+                  <input
+                    type="number"
+                    value={config.group_size}
+                    onChange={(e) => setConfig({...config, group_size: parseInt(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Hidden Size 1
+                  </label>
+                  <input
+                    type="number"
+                    value={config.hidden_size1}
+                    onChange={(e) => setConfig({...config, hidden_size1: parseInt(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Hidden Size 2
+                  </label>
+                  <input
+                    type="number"
+                    value={config.hidden_size2}
+                    onChange={(e) => setConfig({...config, hidden_size2: parseInt(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Learning Rate
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={config.lr}
+                    onChange={(e) => setConfig({...config, lr: parseFloat(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Dropout
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={config.dropout}
+                    onChange={(e) => setConfig({...config, dropout: parseFloat(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Weight Decay
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={config.weight_decay}
+                    onChange={(e) => setConfig({...config, weight_decay: parseFloat(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
+                    Bad Counter
+                  </label>
+                  <input
+                    type="number"
+                    value={config.bad_counter}
+                    onChange={(e) => setConfig({...config, bad_counter: parseInt(e.target.value)})}
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div className="mt-8 flex gap-3">
