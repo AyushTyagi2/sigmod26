@@ -32,6 +32,27 @@ docker run --rm -p 8000:8000 -v ${PWD}\backend\dataset:/app/backend/dataset poli
 
 The volume mount keeps datasets and generated summaries on your host machine while the container serves the API at `http://localhost:8000/poligras`.
 
+### Applying Dynamic Edge Updates
+
+After a dataset has been summarised you can submit an update stream (edge insertions/removals) to refresh the correction sets and superedge counts without recomputing the full summary. Upload the JSON stream via:
+
+```
+POST /datasets/{dataset_id}/apply-updates
+Form field: updates_file (content-type application/json)
+```
+
+The server reads `backend/dataset/{dataset_id}/output.json`, applies the updates, writes `output_dynamic.json`, and returns the refreshed payload. Each entry inside the uploaded JSON array (or the `updates` array) must look like:
+
+```json
+{
+  "operation": "add", // or "remove" / "delete"
+  "source": "12", // node ids from the summarisation output
+  "target": "42"
+}
+```
+
+Only correction sets and superedges are affected—supernode memberships stay fixed. The response mirrors the original summary schema with an `artifacts` section describing memberships, correction edges, and loop counts so it can be fed back into subsequent update batches.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

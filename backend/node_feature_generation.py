@@ -1,57 +1,50 @@
+import os
 import torch
 import pickle
-import networkx as nx
-import numpy as np
-import argparse
-from os.path import basename
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def feature_generator(folder_name, interval_size=1000):
+    graph_path = os.path.join(
+        BASE_DIR,
+        "dataset",
+        folder_name,
+        f"{folder_name}_graph"
+    )
 
-if __name__ == "__main__":
+    if not os.path.exists(graph_path):
+        raise FileNotFoundError(f"Graph file not found: {graph_path}")
 
-    parser = argparse.ArgumentParser(description="Run feature generation code.")
-    parser.add_argument("--dataset", nargs="?", default="in-2004", help="Dataset name")
-    args = parser.parse_args()
+    with open(graph_path, "rb") as g_file:
+        loaded_graph = pickle.load(g_file)
 
-    
-    interval_size = 1000 # interval size is defined as $|V|/d$, where $|V|$ is the number of nodes and $d$ is final output node embedding size
+    g = loaded_graph["G"]
 
-    g_file = open('./dataset/' + args.dataset + '/' + args.dataset + '_graph', 'rb')
-    loaded_graph = pickle.load(g_file)
-    g_file.close()
-    g = loaded_graph['G']
     num_node = g.number_of_nodes()
-    print('# nodes: ', num_node)
-    print('# edges: ', g.number_of_edges())
+    print("# nodes:", num_node)
+    print("# edges:", g.number_of_edges())
 
+    node_dict = {nd: idx for idx, nd in enumerate(g.nodes())}
+    feat_size = num_node // interval_size + 1
 
-    node_dict = {}#
-    nd_id = 0
+    feat_list = []
     for nd in g.nodes():
-        node_dict[nd] = nd_id
-        nd_id += 1
-
-    num = 0
-    feat_list, feat_size = [], num_node//interval_size + 1
-
-    for nd in g.nodes():#range(num_node):
-        print('nd', num)
-        nei_list = list(g[nd])
-        
-
-        curr_feat = [0.0]*feat_size#[0.0]*(min_nei//interval_size)
-        t1 = time.time()
-        for nei in nei_list:
-            row = node_dict[nei]//interval_size
-            curr_feat[row] += 1.0
-            
+        curr_feat = [0.0] * feat_size
+        for nei in g[nd]:
+            curr_feat[node_dict[nei] // interval_size] += 1.0
         feat_list.append(curr_feat)
-        num += 1
 
     node_feat = torch.FloatTensor(feat_list)
 
+    out_path = os.path.join(
+        BASE_DIR,
+        "dataset",
+        folder_name,
+        f"{folder_name}_feat"
+    )
 
-    f = open(args.dataset + '_feat', 'wb')
-    data = {'feat': node_feat}
-    pickle.dump(data, f)
-    f.close()
+    with open(out_path, "wb") as f:
+        pickle.dump({"feat": node_feat}, f)
+
+    print("Saved features to:", out_path)
+    return node_feat

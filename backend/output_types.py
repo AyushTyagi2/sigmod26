@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, TypedDict
+from typing import Dict, List, TypedDict
 
 
 class ParameterSet(TypedDict):
@@ -106,6 +106,27 @@ class GraphCollection(TypedDict):
     summary: SummaryGraph
 
 
+class CorrectionEdge(TypedDict):
+    source: str
+    target: str
+
+
+class CorrectionSets(TypedDict):
+    positive: List[CorrectionEdge]
+    negative: List[CorrectionEdge]
+
+
+class SupernodeMembership(TypedDict):
+    members: Dict[str, List[str]]
+    node_to_supernode: Dict[str, str]
+
+
+class SummaryArtifacts(TypedDict, total=False):
+    supernodes: SupernodeMembership
+    corrections: CorrectionSets
+    self_loops: int
+
+
 class MergeStepStats(TypedDict):
     step_index: int
     reward: float
@@ -130,9 +151,12 @@ class PoligrasOutputBase(TypedDict):
 class PoligrasOutput(PoligrasOutputBase, total=False):
     meta: Meta
     timeline: List[MergeStep]
+    artifacts: SummaryArtifacts
 
 
 __all__ = [
+    "CorrectionEdge",
+    "CorrectionSets",
     "CorrectionBreakdown",
     "GraphCollection",
     "InitialEdge",
@@ -144,9 +168,11 @@ __all__ = [
     "Meta",
     "ParameterSet",
     "PoligrasOutput",
+    "SummaryArtifacts",
     "Stats",
     "SummaryEdge",
     "SummaryGraph",
+    "SupernodeMembership",
     "SummaryNode",
     "SummaryStats",
 ]

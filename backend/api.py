@@ -1,12 +1,16 @@
+import json
 from types import SimpleNamespace
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from .node_feature_generation import feature_generator
 import shutil
+from fastapi import BackgroundTasks
 import uuid
 
 from .run import run_poligras
+from .dynamic_updates import apply_edge_updates, parse_update_stream, UpdateStreamError
 
 # Increase multipart limits for large folder uploads
 try:
@@ -73,39 +77,48 @@ async def bad_request_handler(request, exc):
 
 
 @app.post("/upload-multiple")
-async def upload_multiple_files(files: list[UploadFile] = File(...)):
+async def upload_multiple_files(
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...)
+):
     try:
         dataset_id = str(uuid.uuid4())
         dataset_dir = Path(__file__).parent / "dataset" / dataset_id
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
         uploaded_files = []
-        print(f"Received {len(files)} files")
+        has_graph = False
+        has_feat = False
+
         for file in files:
-            original_filename = file.filename
-            print(f"Processing file: {original_filename}")
-            
-            # Rename files to match expected pattern
-            filename_lower = original_filename.lower()
-            if any(x in filename_lower for x in ['_feat', 'features', 'feature', 'feats']):
-                new_filename = f"{dataset_id}_feat"
-            elif any(x in filename_lower for x in ['_graph', 'graph', 'adj', 'structure', 'adjacency']):
+            filename = file.filename.lower()
+
+            if "_graph" in filename:
+                has_graph = True
                 new_filename = f"{dataset_id}_graph"
+            elif "_feat" in filename:
+                has_feat = True
+                new_filename = f"{dataset_id}_feat"
             else:
-                new_filename = original_filename
-            
+                new_filename = file.filename
+
             file_path = dataset_dir / new_filename
-            
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            
+
             uploaded_files.append(new_filename)
+
+        # Run feature generation in background
+        if has_graph and not has_feat:
+            background_tasks.add_task(feature_generator, dataset_id)
 
         return {
             "dataset_id": dataset_id,
             "files_uploaded": len(files),
-            "files": uploaded_files
+            "files": uploaded_files,
+            "features_generation_started": has_graph and not has_feat
         }
+
     except Exception as e:
         raise HTTPException(500, f"Upload error: {str(e)}")
 
@@ -159,7 +172,6 @@ async def get_dataset_output(dataset_id: str):
         if not output_path.exists():
             raise HTTPException(404, "Output not found for this dataset")
             
-        import json
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data
@@ -167,6 +179,36 @@ async def get_dataset_output(dataset_id: str):
         raise
     except Exception as e:
         raise HTTPException(500, f"Error reading output: {str(e)}")
+
+
+@app.post("/datasets/{dataset_id}/apply-updates")
+async def apply_updates_to_summary(dataset_id: str, updates_file: UploadFile = File(...)):
+    try:
+        dataset_dir = Path(__file__).parent / "dataset" / dataset_id
+        output_path = dataset_dir / "output.json"
+        if not output_path.exists():
+            raise HTTPException(404, "Output not found for this dataset")
+
+        with output_path.open("r", encoding="utf-8") as f:
+            summary_payload = json.load(f)
+
+        update_bytes = await updates_file.read()
+        try:
+            update_records = parse_update_stream(update_bytes)
+        except UpdateStreamError as exc:
+            raise HTTPException(400, f"Invalid update stream file: {exc}") from exc
+
+        updated_summary = apply_edge_updates(summary_payload, update_records)
+
+        updated_output_path = dataset_dir / "output_dynamic.json"
+        with updated_output_path.open("w", encoding="utf-8") as f:
+            json.dump(updated_summary, f, indent=2)
+
+        return updated_summary
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to apply updates: {str(e)}")
 
 
 @app.get("/health")

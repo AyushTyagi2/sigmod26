@@ -18,6 +18,9 @@ from backend.output_types import (
     SummaryGraph,
     SummaryEdge,
     SummaryNode,
+    SummaryArtifacts,
+    SupernodeMembership,
+    CorrectionSets,
 )
 
 
@@ -719,6 +722,7 @@ class PoligrasRunner(object):
         initial_graph_payload = self._build_initial_snapshot()
         stats_payload = self._build_stats(summary_graph_payload, len(self_edge))
         meta_payload = self._build_meta()
+        artifacts_payload = self._build_artifacts(len(self_edge))
 
         result: PoligrasOutput = {
             'meta': meta_payload,
@@ -728,6 +732,7 @@ class PoligrasRunner(object):
                 'summary': summary_graph_payload,
             },
             'timeline': self.timeline,
+            'artifacts': artifacts_payload,
         }
 
         return result
@@ -755,6 +760,46 @@ class PoligrasRunner(object):
             'edge_count': len(summary_edge_payload),
             'nodes': summary_nodes,
             'edges': list(summary_edge_payload.values()),
+        }
+
+
+    def _build_artifacts(self, self_loop_edges: int) -> SummaryArtifacts:
+        membership_payload = self._build_membership_payload()
+        corrections_payload = self._build_corrections_payload()
+        return {
+            'supernodes': membership_payload,
+            'corrections': corrections_payload,
+            'self_loops': int(self_loop_edges),
+        }
+
+
+    def _build_membership_payload(self) -> SupernodeMembership:
+        members: Dict[str, List[str]] = {}
+        node_to_supernode: Dict[str, str] = {}
+        for supernode_id, initial_nodes in self.superNodes_dict.items():
+            exported_supernode = str(supernode_id)
+            exported_members = [str(self._coerce_node_id(node)) for node in initial_nodes]
+            members[exported_supernode] = exported_members
+            for member in exported_members:
+                node_to_supernode[member] = exported_supernode
+
+        return {
+            'members': members,
+            'node_to_supernode': node_to_supernode,
+        }
+
+
+    def _build_corrections_payload(self) -> CorrectionSets:
+        def convert(edge: Tuple[int, int]) -> Dict[str, str]:
+            source, target = edge
+            return {
+                'source': str(self._coerce_node_id(source)),
+                'target': str(self._coerce_node_id(target)),
+            }
+
+        return {
+            'positive': [convert(edge) for edge in self.correctionSet_plus],
+            'negative': [convert(edge) for edge in self.correctionSet_minus],
         }
 
 
