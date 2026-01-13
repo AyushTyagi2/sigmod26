@@ -8,6 +8,15 @@ import uuid
 
 from .run import run_poligras
 
+# Increase multipart limits for large folder uploads
+try:
+    import python_multipart
+    python_multipart.multipart.MAX_MULTIPART_COUNT = 65536  # Allow 64k files/fields
+    python_multipart.multipart.MAX_MULTIPART_HEADER_SIZE = 1024 * 1024  # 1MB headers
+except ImportError:
+    pass
+
+
 ALLOWED_EXTS = (
     ".csv",
     ".zip",
@@ -47,6 +56,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    print(f"Validation error: {exc}")
+    return await request.app.default_exception_handler(request, exc)
+
+@app.exception_handler(400)
+async def bad_request_handler(request, exc):
+    print(f"Bad Request: {exc}")
+    # Return the original response
+    return await request.app.default_exception_handler(request, exc)
+
+
 
 @app.post("/upload-multiple")
 async def upload_multiple_files(files: list[UploadFile] = File(...)):
@@ -56,13 +80,16 @@ async def upload_multiple_files(files: list[UploadFile] = File(...)):
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
         uploaded_files = []
+        print(f"Received {len(files)} files")
         for file in files:
             original_filename = file.filename
+            print(f"Processing file: {original_filename}")
             
             # Rename files to match expected pattern
-            if '_feat' in original_filename.lower():
+            filename_lower = original_filename.lower()
+            if any(x in filename_lower for x in ['_feat', 'features', 'feature', 'feats']):
                 new_filename = f"{dataset_id}_feat"
-            elif '_graph' in original_filename.lower():
+            elif any(x in filename_lower for x in ['_graph', 'graph', 'adj', 'structure', 'adjacency']):
                 new_filename = f"{dataset_id}_graph"
             else:
                 new_filename = original_filename
@@ -103,6 +130,43 @@ def run_poligras_endpoint(payload: PoligrasRequest):
         raise
     except Exception as e:
         raise HTTPException(500, f"Processing error: {str(e)}")
+
+
+@app.post("/upload-json")
+async def upload_json(file: UploadFile = File(...)):
+    try:
+        dataset_id = str(uuid.uuid4())
+        dataset_dir = Path(__file__).parent / "dataset" / dataset_id
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_path = dataset_dir / "output.json"
+        
+        # Stream copy directly to file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        return {"dataset_id": dataset_id, "message": "JSON uploaded successfully"}
+    except Exception as e:
+        raise HTTPException(500, f"Upload error: {str(e)}")
+
+
+@app.get("/datasets/{dataset_id}/output")
+async def get_dataset_output(dataset_id: str):
+    try:
+        dataset_dir = Path(__file__).parent / "dataset" / dataset_id
+        output_path = dataset_dir / "output.json"
+        
+        if not output_path.exists():
+            raise HTTPException(404, "Output not found for this dataset")
+            
+        import json
+        with open(output_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Error reading output: {str(e)}")
 
 
 @app.get("/health")

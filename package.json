@@ -9,14 +9,20 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@react-sigma/core": "^5.0.6",
     "cytoscape": "^3.30.4",
     "cytoscape-cose-bilkent": "^4.1.0",
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "graphology-layout-noverlap": "^0.4.2",
+    "graphology-types": "^0.24.8",
     "lucide-react": "^0.561.0",
     "next": "16.0.10",
     "react": "19.2.1",
     "react-cytoscapejs": "^2.0.0",
     "react-dom": "19.2.1",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "sigma": "^3.0.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

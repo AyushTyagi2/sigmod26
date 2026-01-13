@@ -21,7 +21,7 @@ from backend.output_types import (
 )
 
 
-MAX_INITIAL_SNAPSHOT_NODES = 200
+MAX_INITIAL_SNAPSHOT_NODES = None  # Set to None for full graph, or a number to limit
 
 
 class Poligras(torch.nn.Module):
@@ -464,8 +464,8 @@ class PoligrasRunner(object):
                     avg_degree = 2.0 * edge_count / float(supernode_count)
 
             self.timeline.append({
-                'n1': str(n1),
-                'n2': str(n2),
+                'n1': str(self._coerce_node_id(n1)),
+                'n2': str(self._coerce_node_id(n2)),
                 'stats': {
                     'step_index': step_index,
                     'reward': float(curr_reward),
@@ -760,8 +760,15 @@ class PoligrasRunner(object):
 
     def _build_initial_snapshot(self, max_nodes: int = MAX_INITIAL_SNAPSHOT_NODES) -> InitialGraph:
         ordered_nodes = list(self.init_graph.nodes())
-        sampled_nodes = ordered_nodes[:max_nodes]
-        sampled = len(sampled_nodes) < len(ordered_nodes)
+        
+        # If max_nodes is None or >= total nodes, use all nodes (no sampling)
+        if max_nodes is None or max_nodes >= len(ordered_nodes):
+            sampled_nodes = ordered_nodes
+            sampled = False
+        else:
+            sampled_nodes = ordered_nodes[:max_nodes]
+            sampled = True
+        
         induced_subgraph = self.init_graph.subgraph(sampled_nodes).copy()
 
         nodes_payload = [

@@ -89,6 +89,27 @@ export interface PoligrasOutput {
         initial: InitialGraph;
         summary: SummaryGraph;
     };
+    timeline?: MergeAction[];  // Timeline of merge operations
+}
+
+// ============================================
+// Action Timeline Types (for step-by-step visualization)
+// ============================================
+
+export interface ActionStats {
+    step_index: number;
+    reward: number;
+    summarisation_ratio: number;
+    node_count: number;
+    edge_count: number;
+    supernode_count: number;
+    avg_degree: number;
+}
+
+export interface MergeAction {
+    n1: string;  // First node being merged
+    n2: string;  // Second node being merged
+    stats: ActionStats;
 }
 
 // ============================================
