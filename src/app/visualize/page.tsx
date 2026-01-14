@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import TimelineControls from "@/components/TimelineControls";
 import StepMetricsPanel from "@/components/StepMetricsPanel";
+import EdgeUpdatePanel from "@/components/EdgeUpdatePanel";
 import { PoligrasOutput, MergeAction, ActionStats } from "@/types";
 
 // Dynamic import for Sigma (needs client-side only)
@@ -24,51 +25,73 @@ export default function TimelineVisualizationPage() {
     const [playbackSpeed, setPlaybackSpeed] = useState(1);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [datasetId, setDatasetId] = useState<string | null>(null);
+    const [graphKey, setGraphKey] = useState(0); // Key to force re-render of graph canvas
+    const [initialSummarySnapshot, setInitialSummarySnapshot] = useState<PoligrasOutput["graphs"]["summary"] | null>(null);
+    const [latestSummarySnapshot, setLatestSummarySnapshot] = useState<PoligrasOutput["graphs"]["summary"] | null>(null);
+    const [hasAppliedUpdates, setHasAppliedUpdates] = useState(false);
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    const syncSummarySnapshots = useCallback((summaryGraph?: PoligrasOutput["graphs"]["summary"], isInitialLoad = false) => {
+        if (!summaryGraph) return;
+        setLatestSummarySnapshot(summaryGraph);
+        // Only set initial snapshot on the first load, never update it after edge updates
+        if (isInitialLoad) {
+            setInitialSummarySnapshot(summaryGraph);
+        }
+    }, []);
 
     // Load data from session storage or fetch from API
     useEffect(() => {
+        let cancelled = false;
+
         const loadData = async () => {
             try {
                 setIsLoading(true);
 
-                // Try session storage first
-                const storedOutput = sessionStorage.getItem("poligrasOutput");
-                if (storedOutput) {
-                    const parsed: PoligrasOutput = JSON.parse(storedOutput);
-                    setOutput(parsed);
+                const storedDatasetId = sessionStorage.getItem("lastDatasetId");
 
-                    // Extract timeline array from the output
-                    if (parsed.timeline && parsed.timeline.length > 0) {
-                        setActions(parsed.timeline);
-                    }
-
-                    setIsLoading(false);
-                    return;
+                if (storedDatasetId) {
+                    setDatasetId(storedDatasetId);
                 }
 
-                // If no stored data, try fetching from API
-                const datasetId = sessionStorage.getItem("lastDatasetId");
-                if (datasetId) {
-                    const response = await fetch(`/api/datasets/${datasetId}/output`);
-                    if (response.ok) {
-                        const data = await response.json();
-                        setOutput(data);
-                        if (data.timeline) {
-                            setActions(data.timeline);
-                        }
+                // Always fetch the original data from backend (no caching to ensure fresh original data)
+                if (storedDatasetId) {
+                    const response = await fetch(`/api/datasets/${storedDatasetId}/output`);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch dataset output (${response.status})`);
                     }
+
+                    const apiData: PoligrasOutput = await response.json();
+                    if (!cancelled) {
+                        setOutput(apiData);
+                        if (apiData.timeline && apiData.timeline.length > 0) {
+                            setActions(apiData.timeline);
+                        }
+                        // This is the original uploaded data, always set as initial snapshot
+                        syncSummarySnapshots(apiData.graphs?.summary, true);
+                    }
+                } else {
+                    setError("No dataset selected. Please upload a dataset first.");
                 }
             } catch (err) {
                 console.error("Failed to load data:", err);
-                setError("Failed to load visualization data. Please go back and upload a dataset.");
+                if (!cancelled) {
+                    setError("Failed to load visualization data. Please go back and upload a dataset.");
+                }
             } finally {
-                setIsLoading(false);
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         };
 
         loadData();
-    }, []);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [syncSummarySnapshots]);
 
     // Playback logic - 30fps maximum using setInterval
     useEffect(() => {
@@ -105,6 +128,21 @@ export default function TimelineVisualizationPage() {
     const handleSpeedChange = useCallback((speed: number) => {
         setPlaybackSpeed(speed);
     }, []);
+
+    // Handle edge update applied - refresh the output with updated summary
+    const handleEdgeUpdateApplied = useCallback((updatedOutput: PoligrasOutput) => {
+        setOutput(updatedOutput);
+        // Don't cache the updated output - we want to always start from original on reload
+        setGraphKey((prev) => prev + 1);
+        if (updatedOutput.timeline && updatedOutput.timeline.length > 0) {
+            setActions(updatedOutput.timeline);
+            setCurrentStep(updatedOutput.timeline.length - 1);
+        }
+        // Only update latest snapshot, NOT initial snapshot - we want to preserve the original
+        syncSummarySnapshots(updatedOutput.graphs?.summary, false);
+        setHasAppliedUpdates(true);
+        setIsPlaying(false);
+    }, [syncSummarySnapshots]);
 
     // Fullscreen on mount
     useEffect(() => {
@@ -196,6 +234,15 @@ export default function TimelineVisualizationPage() {
     const summaryGraph = output.graphs.summary;
     const stats = output.stats;
 
+    const summaryBeforeUpdates = initialSummarySnapshot ?? summaryGraph;
+    const summaryAfterUpdates = hasAppliedUpdates ? (latestSummarySnapshot ?? summaryGraph) : null;
+
+    const superedgeCountFor = (snapshot?: PoligrasOutput["graphs"]["summary"]) =>
+        snapshot?.edge_count ?? stats.summary.superedges;
+
+    const correctionCountFor = (snapshot?: PoligrasOutput["graphs"]["summary"]) =>
+        snapshot?.correction_edge_count ?? stats.summary.correction_edges;
+
 
 
     return (
@@ -204,6 +251,7 @@ export default function TimelineVisualizationPage() {
             <div className={`absolute inset-0 z-0 transition-opacity duration-1000 ${isLoading ? 'opacity-0' : 'opacity-100'}`}>
                 {actions.length > 0 ? (
                     <SigmaGraphCanvas
+                        key={graphKey}
                         initialGraph={initialGraph}
                         summaryGraph={summaryGraph}
                         actions={actions}
@@ -262,8 +310,8 @@ export default function TimelineVisualizationPage() {
                         {/* Divider */}
                         {actions.length > 0 && <div className="h-px bg-white/10 flex-shrink-0" />}
 
-                        {/* B. Timeline Controls Section (Bottom) */}
-                        {actions.length > 0 && (
+                        {/* B. Timeline Controls - only show while playback is in progress */}
+                        {actions.length > 0 && currentStep < actions.length - 1 && (
                             <div className="flex-shrink-0 animate-in fade-in slide-in-from-right-4 duration-500 pb-2">
                                 <div className="flex items-center justify-between mb-3">
                                     <h3 className="text-white text-xs font-bold uppercase tracking-wider opacity-60">Playback</h3>
@@ -283,6 +331,50 @@ export default function TimelineVisualizationPage() {
                     </div>
                 </div>
             </div>
+
+            {/* 4. Bottom Left Panel - Edge Updates (shown after playback completes) */}
+            {datasetId && currentStep >= actions.length - 1 && (
+                <div className="absolute bottom-20 left-6 z-30 w-72 pointer-events-auto animate-in fade-in slide-in-from-left-4 duration-500">
+                    {/* Summary Snapshot Box */}
+                    <div className="bg-slate-900/60 backdrop-blur-xl rounded-xl border border-white/10 p-3 mb-3 shadow-lg space-y-3">
+                        <div>
+                            <h4 className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-2">Before Edge Updates</h4>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-slate-800/50 rounded-lg p-2">
+                                    <p className="text-[10px] text-slate-500 uppercase">Superedges</p>
+                                    <p className="text-lg font-bold text-blue-400">{superedgeCountFor(summaryBeforeUpdates).toLocaleString()}</p>
+                                </div>
+                                <div className="bg-slate-800/50 rounded-lg p-2">
+                                    <p className="text-[10px] text-slate-500 uppercase">Corrections</p>
+                                    <p className="text-lg font-bold text-purple-400">{correctionCountFor(summaryBeforeUpdates).toLocaleString()}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {summaryAfterUpdates && (
+                            <div>
+                                <h4 className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-2">After Edge Updates</h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-slate-800/50 rounded-lg p-2">
+                                        <p className="text-[10px] text-slate-500 uppercase">Superedges</p>
+                                        <p className="text-lg font-bold text-blue-400">{superedgeCountFor(summaryAfterUpdates).toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-slate-800/50 rounded-lg p-2">
+                                        <p className="text-[10px] text-slate-500 uppercase">Corrections</p>
+                                        <p className="text-lg font-bold text-purple-400">{correctionCountFor(summaryAfterUpdates).toLocaleString()}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Edge Update Panel */}
+                    <EdgeUpdatePanel
+                        datasetId={datasetId}
+                        onUpdateApplied={handleEdgeUpdateApplied}
+                    />
+                </div>
+            )}
 
             {/* Visual Flair: Vignette */}
             <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-b from-black/20 via-transparent to-black/40" />

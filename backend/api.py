@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from .node_feature_generation import feature_generator
 import shutil
@@ -66,13 +67,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     print(f"Validation error: {exc}")
-    return await request.app.default_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)}
+    )
 
 @app.exception_handler(400)
 async def bad_request_handler(request, exc):
     print(f"Bad Request: {exc}")
-    # Return the original response
-    return await request.app.default_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc)}
+    )
 
 
 
@@ -165,13 +171,14 @@ async def upload_json(file: UploadFile = File(...)):
 
 @app.get("/datasets/{dataset_id}/output")
 async def get_dataset_output(dataset_id: str):
+    """Always returns the ORIGINAL output.json (never dynamic updates)."""
     try:
         dataset_dir = Path(__file__).parent / "dataset" / dataset_id
         output_path = dataset_dir / "output.json"
-        
+
         if not output_path.exists():
             raise HTTPException(404, "Output not found for this dataset")
-            
+
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data
@@ -202,6 +209,12 @@ async def apply_updates_to_summary(dataset_id: str, updates_file: UploadFile = F
 
         updated_output_path = dataset_dir / "output_dynamic.json"
         with updated_output_path.open("w", encoding="utf-8") as f:
+            json.dump(updated_summary, f, indent=2)
+
+        # Also persist the updated summary at the workspace root for quick inspection/debugging
+        project_root = Path(__file__).resolve().parent.parent
+        root_summary_path = project_root / f"{dataset_id}_output_dynamic.json"
+        with root_summary_path.open("w", encoding="utf-8") as f:
             json.dump(updated_summary, f, indent=2)
 
         return updated_summary

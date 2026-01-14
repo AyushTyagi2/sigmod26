@@ -97,6 +97,7 @@ class SummaryGraph(TypedDict):
     sampled: bool
     node_count: int
     edge_count: int
+    correction_edge_count: int
     nodes: List[SummaryNode]
     edges: List[SummaryEdge]
 

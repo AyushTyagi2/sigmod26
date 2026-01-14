@@ -718,9 +718,22 @@ class PoligrasRunner(object):
             )
 
         summary_nodes = self._build_summary_nodes()
-        summary_graph_payload = self._build_summary_graph(summary_nodes, summary_edge_payload)
+        positive_corrections = len(self.correctionSet_plus)
+        negative_corrections = len(self.correctionSet_minus)
+        correction_edge_count = positive_corrections + negative_corrections
+        summary_graph_payload = self._build_summary_graph(
+            summary_nodes,
+            summary_edge_payload,
+            correction_edge_count,
+        )
         initial_graph_payload = self._build_initial_snapshot()
-        stats_payload = self._build_stats(summary_graph_payload, len(self_edge))
+        stats_payload = self._build_stats(
+            summary_graph_payload,
+            len(self_edge),
+            correction_edge_count,
+            positive_corrections,
+            negative_corrections,
+        )
         meta_payload = self._build_meta()
         artifacts_payload = self._build_artifacts(len(self_edge))
 
@@ -752,12 +765,14 @@ class PoligrasRunner(object):
         self,
         summary_nodes: List[SummaryNode],
         summary_edge_payload: Dict[Tuple[int, int], SummaryEdge],
+        correction_edge_count: int,
     ) -> SummaryGraph:
         return {
             'directed': self.init_graph.is_directed(),
             'sampled': False,
             'node_count': len(summary_nodes),
             'edge_count': len(summary_edge_payload),
+            'correction_edge_count': int(correction_edge_count),
             'nodes': summary_nodes,
             'edges': list(summary_edge_payload.values()),
         }
@@ -843,16 +858,22 @@ class PoligrasRunner(object):
         }
 
 
-    def _build_stats(self, summary_graph: SummaryGraph, self_loop_edges: int) -> Stats:
+    def _build_stats(
+        self,
+        summary_graph: SummaryGraph,
+        self_loop_edges: int,
+        correction_edge_count: int,
+        positive_corrections: int,
+        negative_corrections: int,
+    ) -> Stats:
         initial_nodes = self.init_graph.number_of_nodes()
         initial_edges = self.init_graph.number_of_edges()
-        correction_edges = len(self.correctionSet_plus) + len(self.correctionSet_minus)
         summary_supernodes = summary_graph['node_count']
         summary_superedges = summary_graph['edge_count']
         numerator = summary_supernodes + summary_superedges
         denominator = initial_nodes + initial_edges
         compression_ratio = (numerator / denominator) if denominator else 0.0
-        total_reward = self.init_graph.number_of_edges() - self_loop_edges - len(self.superEdges) - len(self.correctionSet_plus) - len(self.correctionSet_minus)
+        total_reward = self.init_graph.number_of_edges() - self_loop_edges - len(self.superEdges) - correction_edge_count
 
         stats: Stats = {
             'initial': {
@@ -862,7 +883,7 @@ class PoligrasRunner(object):
             'summary': {
                 'supernodes': summary_supernodes,
                 'superedges': summary_superedges,
-                'correction_edges': correction_edges,
+                'correction_edges': correction_edge_count,
             },
             'compression_ratio': compression_ratio,
             'total_reward': total_reward,
@@ -872,8 +893,8 @@ class PoligrasRunner(object):
             stats['avg_supernode_size'] = initial_nodes / summary_supernodes
 
         stats['correction_breakdown'] = {
-            'positive': len(self.correctionSet_plus),
-            'negative': len(self.correctionSet_minus),
+            'positive': positive_corrections,
+            'negative': negative_corrections,
         }
 
         return stats

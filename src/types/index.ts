@@ -78,6 +78,7 @@ export interface SummaryGraph {
     sampled: boolean;
     node_count: number;
     edge_count: number;
+    correction_edge_count: number;
     nodes: SummaryNode[];
     edges: SummaryEdge[];
 }

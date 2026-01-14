@@ -126,6 +126,7 @@ export const MOCK_POLIGRAS_OUTPUT: PoligrasOutput = {
             sampled: false,
             node_count: 5,
             edge_count: 7,
+            correction_edge_count: 31817,
             nodes: [
                 { id: "S0", size: 4 },
                 { id: "S1", size: 5 },

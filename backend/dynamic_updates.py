@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Dict, Iterable, List, Literal, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 
 from backend.output_types import PoligrasOutput, SummaryEdge
 
 PairKey = Tuple[str, str]
 EdgeKey = Tuple[str, str]
 Operation = Literal["add", "remove"]
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[DynamicUpdates] %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 
 class UpdateStreamError(ValueError):
@@ -53,14 +60,20 @@ def parse_update_stream(raw_data: bytes | str) -> List[EdgeUpdate]:
     if not isinstance(entries, list):
         raise UpdateStreamError("Expected a JSON array or an object with an 'updates' list")
 
+    def _get_field(entry: Dict, keys: Sequence[str]) -> Optional[str | int]:
+        for key in keys:
+            if key in entry and entry[key] is not None:
+                return entry[key]
+        return None
+
     updates: List[EdgeUpdate] = []
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise UpdateStreamError(f"Update #{idx} is not an object")
 
-        op_token = entry.get("operation") or entry.get("op") or entry.get("action")
+        op_token = _get_field(entry, ("operation", "op", "action", "type"))
         if not isinstance(op_token, str):
-            raise UpdateStreamError(f"Update #{idx} is missing an operation field")
+            raise UpdateStreamError(f"Update #{idx} is missing an operation field (use 'type', 'op', 'operation', or 'action')")
 
         op_norm = op_token.strip().lower()
         if op_norm in {"add", "addition", "insert", "insertion"}:
@@ -70,8 +83,8 @@ def parse_update_stream(raw_data: bytes | str) -> List[EdgeUpdate]:
         else:
             raise UpdateStreamError(f"Update #{idx} has unsupported operation '{op_token}'")
 
-        source = entry.get("source") or entry.get("u") or entry.get("from")
-        target = entry.get("target") or entry.get("v") or entry.get("to")
+        source = _get_field(entry, ("source", "u", "from"))
+        target = _get_field(entry, ("target", "v", "to"))
         if source is None or target is None:
             raise UpdateStreamError(f"Update #{idx} must specify 'source' and 'target'")
 
@@ -160,7 +173,12 @@ class _SummaryDynamicState:
         summary_graph["edge_count"] = len(summary_graph["edges"])
         summary_graph["node_count"] = len(summary_graph["nodes"])
 
-        updated_stats = self._build_stats(payload["stats"])
+        positive_count = sum(len(edges) for edges in self.correction_plus.values())
+        negative_count = sum(len(edges) for edges in self.correction_minus.values())
+        correction_total = positive_count + negative_count
+        summary_graph["correction_edge_count"] = correction_total
+
+        updated_stats = self._build_stats(payload["stats"], positive_count, negative_count)
         payload["stats"] = updated_stats
 
         artifacts = payload.setdefault("artifacts", {})
@@ -182,15 +200,23 @@ class _SummaryDynamicState:
     def _apply_addition(self, pair_key: PairKey, edge_key: EdgeKey, super_u: str, super_v: str) -> None:
         if pair_key in self.superedges:
             neg_edges = self.correction_minus.setdefault(pair_key, set())
-            neg_edges.discard(edge_key)
-            if not neg_edges:
-                self.correction_minus.pop(pair_key, None)
+            if edge_key in neg_edges:
+                neg_edges.remove(edge_key)
+                self._log_change(
+                    f"Resolved missing edge {edge_key} for superedge {pair_key}; remaining holes: {len(neg_edges)}"
+                )
+                if not neg_edges:
+                    self.correction_minus.pop(pair_key, None)
+                    self._log_change(f"Superedge {pair_key} now has no correction-minus entries")
             return
 
         pos_edges = self.correction_plus.setdefault(pair_key, set())
         if edge_key in pos_edges:
             return
         pos_edges.add(edge_key)
+        self._log_change(
+            f"Recorded positive correction {edge_key} for pair {pair_key}; total positives: {len(pos_edges)}"
+        )
 
         possible = self._possible_edges(super_u, super_v)
         if possible and len(pos_edges) > possible / 2:
@@ -202,8 +228,11 @@ class _SummaryDynamicState:
             if edge_key in neg_edges:
                 return
             neg_edges.add(edge_key)
-
             possible = self._possible_edges(super_u, super_v)
+            self._log_change(
+                f"Marked missing edge {edge_key} for superedge {pair_key}; missing {len(neg_edges)} of {possible}"
+            )
+
             if possible == 0:
                 return
             actual_edges = possible - len(neg_edges)
@@ -214,9 +243,15 @@ class _SummaryDynamicState:
         pos_edges = self.correction_plus.get(pair_key)
         if not pos_edges:
             return
-        pos_edges.discard(edge_key)
+        if edge_key not in pos_edges:
+            return
+        pos_edges.remove(edge_key)
+        self._log_change(
+            f"Removed positive correction {edge_key} for pair {pair_key}; remaining positives: {len(pos_edges)}"
+        )
         if not pos_edges:
             self.correction_plus.pop(pair_key, None)
+            self._log_change(f"Pair {pair_key} no longer tracked in positive corrections")
 
     def _promote_to_superedge(
         self,
@@ -237,6 +272,12 @@ class _SummaryDynamicState:
         else:
             self.correction_minus.pop(pair_key, None)
         self.correction_plus.pop(pair_key, None)
+        total_corrections = sum(len(edges) for edges in self.correction_plus.values()) + \
+            sum(len(edges) for edges in self.correction_minus.values())
+        self._log_change(
+            f"Promoted {pair_key} to superedge; missing edges: {len(self.correction_minus.get(pair_key, set()))}. "
+            f"Totals -> superedges: {len(self.superedges)}, corrections: {total_corrections}"
+        )
 
     def _demote_superedge(
         self,
@@ -256,6 +297,12 @@ class _SummaryDynamicState:
         else:
             self.correction_plus.pop(pair_key, None)
         self.correction_minus.pop(pair_key, None)
+        total_corrections = sum(len(edges) for edges in self.correction_plus.values()) + \
+            sum(len(edges) for edges in self.correction_minus.values())
+        self._log_change(
+            f"Demoted {pair_key} to correction sets; positives retained: {len(self.correction_plus.get(pair_key, set()))}. "
+            f"Totals -> superedges: {len(self.superedges)}, corrections: {total_corrections}"
+        )
 
     def _possible_edges(self, super_u: str, super_v: str) -> int:
         size_u = len(self.members[super_u])
@@ -283,6 +330,9 @@ class _SummaryDynamicState:
                 for v in nodes_v:
                     yield (u, v)
 
+    def _log_change(self, message: str) -> None:
+        logger.info("[DynamicUpdates] %s", message)
+
     def _build_summary_edges(self) -> List[SummaryEdge]:
         edges: List[SummaryEdge] = []
         for pair in sorted(self.superedges):
@@ -301,14 +351,21 @@ class _SummaryDynamicState:
             })
         return edges
 
-    def _build_stats(self, previous_stats: Dict) -> Dict:
+    def _build_stats(
+        self,
+        previous_stats: Dict,
+        positive_count: Optional[int] = None,
+        negative_count: Optional[int] = None,
+    ) -> Dict:
         initial_stats = previous_stats.get("initial", {})
         initial_nodes = int(initial_stats.get("nodes", 0))
         initial_edges = int(initial_stats.get("edges", 0))
         summary_supernodes = len(self.members)
         summary_superedges = len(self.superedges)
-        positive_count = sum(len(edges) for edges in self.correction_plus.values())
-        negative_count = sum(len(edges) for edges in self.correction_minus.values())
+        if positive_count is None:
+            positive_count = sum(len(edges) for edges in self.correction_plus.values())
+        if negative_count is None:
+            negative_count = sum(len(edges) for edges in self.correction_minus.values())
         correction_total = positive_count + negative_count
 
         denominator = initial_nodes + initial_edges
