@@ -146,9 +146,6 @@ For questions, suggestions, or collaborations:
 - **Parth Kulkarni**: 2023csb1142@iitrpr.ac.in
 - **Dr. Manish Kumar**: manishk@iitrpr.ac.in
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
