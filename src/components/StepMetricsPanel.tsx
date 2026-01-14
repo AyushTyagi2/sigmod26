@@ -8,6 +8,7 @@ interface StepMetricsPanelProps {
     initialNodeCount: number;
     initialEdgeCount: number;
     totalSteps: number;
+    currentStep: number; // Add currentStep prop
     className?: string;
 }
 
@@ -16,6 +17,7 @@ export default function StepMetricsPanel({
     initialNodeCount,
     initialEdgeCount,
     totalSteps,
+    currentStep,
     className = "",
 }: StepMetricsPanelProps) {
     if (!stats) {
@@ -27,17 +29,19 @@ export default function StepMetricsPanel({
         );
     }
 
-    const compressionPercent = (1 - stats.summarisation_ratio) * 100;
+    // Step 0 special case: initial state
+    const isInitialState = currentStep === 0;
+    const compressionPercent = isInitialState ? 0 : (1 - stats.summarisation_ratio) * 100;
     const nodeReduction = initialNodeCount - stats.supernode_count;
     const edgeReduction = initialEdgeCount - stats.edge_count;
-    const progress = ((stats.step_index + 1) / totalSteps) * 100;
+    const progress = isInitialState ? 0 : (currentStep / totalSteps) * 100;
 
     return (
         <div className={`bg-slate-900/60 backdrop-blur-xl rounded-2xl p-6 border border-white/10 ${className}`}>
             <div className="flex items-center justify-between mb-4">
                 <h3 className="text-white font-semibold">Step Metrics</h3>
                 <span className="text-sm text-gray-400">
-                    Step {stats.step_index + 1} of {totalSteps}
+                    {isInitialState ? 'Initial State' : `Step ${currentStep} of ${totalSteps}`}
                 </span>
             </div>
 
@@ -61,7 +65,7 @@ export default function StepMetricsPanel({
                 <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                     <div className="text-gray-400 text-xs mb-1">Reward</div>
                     <div className="text-2xl font-bold text-green-400">
-                        +{stats.reward}
+                        {isInitialState ? '0' : `+${stats.reward.toFixed(2)}`}
                     </div>
                 </div>
 
@@ -69,7 +73,7 @@ export default function StepMetricsPanel({
                 <div className="bg-white/5 rounded-xl p-4 border border-white/5">
                     <div className="text-gray-400 text-xs mb-1">Compression</div>
                     <div className="text-2xl font-bold text-purple-400">
-                        {compressionPercent.toFixed(1)}%
+                        {compressionPercent.toFixed(2)}%
                     </div>
                 </div>
 

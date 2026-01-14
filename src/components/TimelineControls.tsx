@@ -24,28 +24,45 @@ export default function TimelineControls({
     onSpeedChange,
 }: TimelineControlsProps) {
     const totalSteps = actions.length;
-    const progressPercent = totalSteps > 0 ? (currentStep / (totalSteps - 1)) * 100 : 0;
+    const progressPercent = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 
     // Current action info
-    const currentAction = currentStep >= 0 && currentStep < actions.length ? actions[currentStep] : null;
+    const currentAction = currentStep > 0 && currentStep <= actions.length ? actions[currentStep - 1] : null;
 
     // Use memoized sparkline bars
     const sparklineBars = useSparkline(actions, currentStep);
 
     const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newStep = parseInt(e.target.value, 10);
-        onStepChange(newStep);
+        const requestedStep = parseInt(e.target.value, 10);
+        
+        // Only allow: step 0 (initial), last step (final), or ±1 from current
+        const lastStep = totalSteps; // Final step is totalSteps, not totalSteps-1
+        
+        if (requestedStep === 0 || requestedStep === lastStep) {
+            // Allow jumping to start or end
+            onStepChange(requestedStep);
+        } else if (requestedStep === currentStep + 1 || requestedStep === currentStep - 1) {
+            // Allow single step forward or backward
+            onStepChange(requestedStep);
+        } else {
+            // Prevent jumping by multiple steps - snap to closest allowed position
+            if (requestedStep < currentStep) {
+                onStepChange(Math.max(0, currentStep - 1));
+            } else {
+                onStepChange(Math.min(lastStep, currentStep + 1));
+            }
+        }
     };
 
     const goToStart = () => onStepChange(0);
-    const goToEnd = () => onStepChange(Math.max(0, totalSteps - 1));
+    const goToEnd = () => onStepChange(totalSteps); // Go to totalSteps, not totalSteps-1
     const stepBack = () => onStepChange(Math.max(0, currentStep - 1));
-    const stepForward = () => onStepChange(Math.min(totalSteps - 1, currentStep + 1));
+    const stepForward = () => onStepChange(Math.min(totalSteps, currentStep + 1)); // Max is totalSteps
 
     return (
         <div className="w-full flex flex-col gap-5">
             {/* 1. Progress Slider */}
-            <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden group">
+            <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden group" title="Use ◀▶ buttons or drag slider (only ±1 step, or jump to start/end)">
                 <div
                     className="absolute h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-100"
                     style={{ width: `${progressPercent}%` }}
@@ -53,7 +70,7 @@ export default function TimelineControls({
                 <input
                     type="range"
                     min={0}
-                    max={Math.max(0, totalSteps - 1)}
+                    max={totalSteps}
                     value={currentStep}
                     onChange={handleSliderChange}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
@@ -107,7 +124,7 @@ export default function TimelineControls({
             {/* 3. Info Row (Step + Speed) */}
             <div className="flex items-center justify-between text-xs font-medium text-slate-400 px-1">
                 <div className="font-mono">
-                    Step <span className="text-white">{currentStep + 1}</span><span className="opacity-50">/{totalSteps}</span>
+                    Step <span className="text-white">{currentStep}</span><span className="opacity-50">/{totalSteps}</span>
                 </div>
 
                 <div className="flex items-center gap-2 bg-white/5 rounded-lg pl-2 pr-1 py-1 border border-white/5 hover:border-white/10 transition-colors">
@@ -133,7 +150,7 @@ export default function TimelineControls({
                     <span className="text-purple-300">{currentAction.n1}</span>
                     <span className="text-slate-600">+</span>
                     <span className="text-purple-300">{currentAction.n2}</span>
-                    <span className="ml-auto text-emerald-400 font-bold">+{currentAction.stats.reward}</span>
+                    <span className="ml-auto text-emerald-400 font-bold">+{currentAction.stats.reward.toFixed(2)}</span>
                 </div>
             ) : (
                 <div className="h-[38px]" /> // Spacer to avoid layout jump
@@ -191,7 +208,7 @@ function useSparkline(actions: MergeAction[], currentStep: number) {
                         isFuture ? "invisible" : "bg-blue-500/50"
                         }`}
                     style={{ height: `${height}%` }}
-                    title={`Step ${absoluteIndex + 1}: ${action.stats.reward}`}
+                    title={`Step ${absoluteIndex + 1}: ${action.stats.reward.toFixed(2)}`}
                 />
             );
         });

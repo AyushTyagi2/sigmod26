@@ -44,23 +44,10 @@ export default function SigmaGraphCanvas({
     useEffect(() => {
         if (!initialGraph) return;
 
+        // Create initial graph with circular layout (handled inside createInitialGraph)
         const graph = createInitialGraph(initialGraph);
 
-        // Circular layout first (fast)
-        const nodes = graph.nodes();
-        const N = nodes.length;
-        for (let i = 0; i < N; i++) {
-            const angle = (i / N) * Math.PI * 2;
-            graph.updateNodeAttributes(nodes[i], (attr: any) => ({
-                ...attr,
-                x: 100 * Math.cos(angle),
-                y: 100 * Math.sin(angle),
-                size: 2,
-                zIndex: 1
-            }));
-        }
-
-        // ForceAtlas2 layout
+        // Apply ForceAtlas2 layout for better spacing
         forceAtlas2.assign(graph, {
             iterations: 50,
             settings: {
@@ -170,18 +157,24 @@ export default function SigmaGraphCanvas({
         };
 
         // OPTIMIZATION: Jump to End (Summary State)
-        const isJumpToEnd = currentStep === actions.length - 1 && Math.abs(currentStep - prevStep) > 10;
+        // Only trigger jump-to-end optimization when coming from far away (not adjacent steps)
+        const isJumpToEnd = currentStep === actions.length && prevStep < actions.length - 1;
 
-        if (summaryGraph && isJumpToEnd) {
-            const finalGraph = createSummaryGraph(summaryGraph);
+        if (summaryGraph && isJumpToEnd && baseGraph) {
+            console.log(`[Canvas] Jump to end: using summary graph with ${summaryGraph.nodes.length} nodes, ${summaryGraph.edges.length} edges`);
+            // Pass baseGraph to preserve original node positions
+            const finalGraph = createSummaryGraph(summaryGraph, baseGraph);
 
+            // Run fewer iterations since we're starting from original positions
             forceAtlas2.assign(finalGraph, {
-                iterations: 50,
+                iterations: 100, // Reduced since we have better starting positions
                 settings: {
                     gravity: 1,
                     scalingRatio: 10,
                     strongGravityMode: true,
+                    slowDown: 10,
                     barnesHutOptimize: true,
+                    barnesHutTheta: 0.5,
                 },
             });
 
@@ -198,12 +191,22 @@ export default function SigmaGraphCanvas({
         // Forward Play - SYNCHRONOUS single step processing
         if (currentStep > prevStep) {
             console.log(`[Canvas] Forward: ${prevStep} -> ${currentStep}`);
+            
+            // Remove previous highlight
+            if (lastHighlightedRef.current && graph.hasNode(lastHighlightedRef.current)) {
+                graph.setNodeAttribute(lastHighlightedRef.current, "isHighlighted", false);
+                updateSingleNodeVisuals(lastHighlightedRef.current);
+            }
+            
             if (currentStep === 0) {
-                // Step 0: Just base graph, nothing to apply
+                // Step 0: Just base graph, no actions applied
+                lastHighlightedRef.current = null;
             } else {
-                // Apply only the SINGLE action for this step (currentStep is 1-indexed)
-                const action = actions[currentStep - 1];
-                if (action) {
+                // Apply the action for this step (currentStep is 1-indexed)
+                // Step 1 means apply actions[0], Step 2 means apply actions[1], etc.
+                const actionIndex = currentStep - 1;
+                if (actionIndex >= 0 && actionIndex < actions.length) {
+                    const action = actions[actionIndex];
                     const affected = applyMergeAction(graph, action);
 
                     // Update visuals only for affected nodes
@@ -211,12 +214,7 @@ export default function SigmaGraphCanvas({
                         if (graph.hasNode(node)) updateSingleNodeVisuals(node);
                     });
 
-                    // Update highlight
-                    if (lastHighlightedRef.current && graph.hasNode(lastHighlightedRef.current)) {
-                        graph.setNodeAttribute(lastHighlightedRef.current, "isHighlighted", false);
-                        updateSingleNodeVisuals(lastHighlightedRef.current);
-                    }
-
+                    // Highlight the merged node
                     const n1 = String(action.n1);
                     if (graph.hasNode(n1)) {
                         graph.setNodeAttribute(n1, "isHighlighted", true);

@@ -3,6 +3,25 @@
 import Graph from "graphology";
 import { InitialGraph, MergeAction } from "@/types";
 
+/**
+ * Applies circular layout to all nodes in the graph
+ * This ensures consistent positioning for both initial and summary graphs
+ */
+function applyCircularLayout(graph: Graph, radius: number = 400): void {
+    const nodeCount = graph.order;
+    let index = 0;
+    
+    graph.forEachNode((node) => {
+        const angle = (2 * Math.PI * index) / nodeCount;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        
+        graph.setNodeAttribute(node, "x", x);
+        graph.setNodeAttribute(node, "y", y);
+        index++;
+    });
+}
+
 export function createInitialGraph(initialGraph: InitialGraph): Graph {
     const graph = new Graph({ type: "undirected", multi: false });
 
@@ -13,11 +32,13 @@ export function createInitialGraph(initialGraph: InitialGraph): Graph {
             weight: 1, // Logical weight (number of merged nodes)
             size: 2,   // Visual size (pixels), defaults to small
             degree: node.degree,
-            x: Math.random() * 1000,
-            y: Math.random() * 1000,
+            // x, y will be set by circular layout below
             color: "#0a84ff", // Apple blue
         });
     });
+
+    // Apply circular layout AFTER all nodes are added
+    applyCircularLayout(graph, 400);
 
     // ... (edges remain same)
     initialGraph.edges.forEach((edge) => {
@@ -35,43 +56,95 @@ export function createInitialGraph(initialGraph: InitialGraph): Graph {
         }
     });
 
+    console.log(`[createInitialGraph] Created initial graph: ${graph.order} nodes, ${graph.size} edges`);
     return graph;
 }
 
 /**
  * Converts the summary graph from JSON format to a Graphology graph
- * Used for O(1) jump to end state
+ * Uses the SAME circular layout logic as initial graph for consistency
+ * @param summaryGraph - The summary graph data
+ * @param initialGraph - Not used anymore, kept for API compatibility
  */
-export function createSummaryGraph(summaryGraph: { nodes: any[]; edges: any[] }): Graph {
+export function createSummaryGraph(
+    summaryGraph: { nodes: any[]; edges: any[] },
+    initialGraph?: Graph
+): Graph {
     const graph = new Graph({ type: "undirected", multi: false });
 
-    // Add all nodes from summary graph
+    // Add all nodes from summary graph (no positioning yet)
     summaryGraph.nodes.forEach((node) => {
-        graph.addNode(String(node.id), {
-            label: String(node.id),
+        const nodeId = String(node.id);
+        
+        graph.addNode(nodeId, {
+            label: nodeId,
             weight: node.size, // Used for logical weight
             size: 3,           // Visual size placeholder (updated by canvas)
-            x: Math.random() * 1000,
-            y: Math.random() * 1000,
+            // x, y will be set by circular layout below
             color: node.size > 1 ? "#bf5af2" : "#0a84ff",
         });
     });
 
+    // Apply the SAME circular layout as initial graph
+    applyCircularLayout(graph, 400);
+
     // Add all edges
-    summaryGraph.edges.forEach((edge) => {
+    let skippedEdges = 0;
+    summaryGraph.edges.forEach((edge, idx) => {
         const sourceId = String(edge.source);
         const targetId = String(edge.target);
 
-        if (graph.hasNode(sourceId) && graph.hasNode(targetId)) {
-            try {
+        if (!graph.hasNode(sourceId) || !graph.hasNode(targetId)) {
+            skippedEdges++;
+            if (idx < 5) { // Log first few for debugging
+                console.warn(`[createSummaryGraph] Edge skipped: ${sourceId} -> ${targetId} (node missing)`);
+            }
+            return;
+        }
+
+        // Skip self-loops
+        if (sourceId === targetId) {
+            return;
+        }
+
+        try {
+            // Check if edge already exists (for undirected graphs)
+            if (!graph.hasEdge(sourceId, targetId) && !graph.hasEdge(targetId, sourceId)) {
                 graph.addEdge(sourceId, targetId, {
                     weight: edge.weight,
                     color: "#636366",
                 });
-            } catch { }
+            }
+        } catch (err) {
+            if (idx < 5) {
+                console.warn(`[createSummaryGraph] Failed to add edge ${sourceId} -> ${targetId}:`, err);
+            }
         }
     });
+    
+    if (skippedEdges > 0) {
+        console.warn(`[createSummaryGraph] Skipped ${skippedEdges} edges due to missing nodes`);
+    }
 
+    // Check for isolated nodes (nodes with no edges)
+    let isolatedCount = 0;
+    graph.forEachNode((node) => {
+        if (graph.degree(node) === 0) {
+            isolatedCount++;
+            if (isolatedCount <= 3) { // Log first few
+                console.warn(`[createSummaryGraph] Node ${node} is isolated (no edges)`);
+            }
+        }
+    });
+    
+    if (isolatedCount > 0) {
+        console.warn(
+            `[createSummaryGraph] Found ${isolatedCount} isolated nodes. ` +
+            `This may indicate missing edges in the summary graph data.`
+        );
+    }
+
+    console.log(`[createSummaryGraph] Created graph with circular layout: ${graph.order} nodes, ${graph.size} edges`);
     return graph;
 }
 

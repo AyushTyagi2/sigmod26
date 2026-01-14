@@ -104,7 +104,7 @@ export default function TimelineVisualizationPage() {
                 lastTime = now;
 
                 setCurrentStep((prev) => {
-                    if (prev >= actions.length - 1) {
+                    if (prev >= actions.length) {
                         setIsPlaying(false);
                         return prev;
                     }
@@ -121,9 +121,11 @@ export default function TimelineVisualizationPage() {
     }, []);
 
     const handleStepChange = useCallback((step: number) => {
-        setCurrentStep(step);
+        // Validate step is within bounds (0 to actions.length inclusive)
+        const validStep = Math.max(0, Math.min(step, actions.length));
+        setCurrentStep(validStep);
         setIsPlaying(false);
-    }, []);
+    }, [actions.length]);
 
     const handleSpeedChange = useCallback((speed: number) => {
         setPlaybackSpeed(speed);
@@ -136,7 +138,9 @@ export default function TimelineVisualizationPage() {
         setGraphKey((prev) => prev + 1);
         if (updatedOutput.timeline && updatedOutput.timeline.length > 0) {
             setActions(updatedOutput.timeline);
-            setCurrentStep(updatedOutput.timeline.length - 1);
+            // Set to final step (timeline.length, not timeline.length - 1)
+            // This ensures we show the complete state after all actions
+            setCurrentStep(updatedOutput.timeline.length);
         }
         // Only update latest snapshot, NOT initial snapshot - we want to preserve the original
         syncSummarySnapshots(updatedOutput.graphs?.summary, false);
@@ -184,10 +188,33 @@ export default function TimelineVisualizationPage() {
     const [isCanvasReady, setIsCanvasReady] = useState(false);
 
     // Get current step stats
-    const currentStats: ActionStats | null =
-        currentStep >= 0 && currentStep < actions.length
-            ? actions[currentStep].stats
-            : null;
+    // Step 0 = initial state (no actions applied yet)
+    const currentStats: ActionStats | null = (() => {
+        if (currentStep === 0 && output) {
+            // Create initial state stats from output.json
+            const initialGraph = output.graphs.initial;
+            const nodeCount = initialGraph.node_count;
+            const edgeCount = initialGraph.edge_count;
+            
+            return {
+                step_index: 0,
+                reward: 0, // No reward at initial state
+                summarisation_ratio: 1.0, // 100% - nothing summarized yet
+                node_count: nodeCount,
+                edge_count: edgeCount,
+                supernode_count: nodeCount, // All nodes are individual supernodes initially
+                avg_degree: nodeCount > 0 ? (initialGraph.directed ? edgeCount / nodeCount : (2 * edgeCount) / nodeCount) : 0,
+            };
+        }
+        
+        // For steps 1+, use the action's stats
+        // actions[0] corresponds to step 1 (first merge)
+        if (currentStep > 0 && currentStep <= actions.length) {
+            return actions[currentStep - 1].stats;
+        }
+        
+        return null;
+    })();
 
     if (isLoading) {
         return (
@@ -303,6 +330,7 @@ export default function TimelineVisualizationPage() {
                                 initialNodeCount={stats.initial.nodes}
                                 initialEdgeCount={stats.initial.edges}
                                 totalSteps={actions.length}
+                                currentStep={currentStep}
                                 className="!bg-transparent !border-none !p-0 !rounded-none !shadow-none"
                             />
                         </div>
@@ -310,8 +338,8 @@ export default function TimelineVisualizationPage() {
                         {/* Divider */}
                         {actions.length > 0 && <div className="h-px bg-white/10 flex-shrink-0" />}
 
-                        {/* B. Timeline Controls - only show while playback is in progress */}
-                        {actions.length > 0 && currentStep < actions.length - 1 && (
+                        {/* B. Timeline Controls - always visible when actions exist */}
+                        {actions.length > 0 && (
                             <div className="flex-shrink-0 animate-in fade-in slide-in-from-right-4 duration-500 pb-2">
                                 <div className="flex items-center justify-between mb-3">
                                     <h3 className="text-white text-xs font-bold uppercase tracking-wider opacity-60">Playback</h3>
@@ -332,8 +360,8 @@ export default function TimelineVisualizationPage() {
                 </div>
             </div>
 
-            {/* 4. Bottom Left Panel - Edge Updates (shown after playback completes) */}
-            {datasetId && currentStep >= actions.length - 1 && (
+            {/* 4. Bottom Left Panel - Edge Updates (shown only at final step) */}
+            {datasetId && currentStep === actions.length && actions.length > 0 && (
                 <div className="absolute bottom-20 left-6 z-30 w-72 pointer-events-auto animate-in fade-in slide-in-from-left-4 duration-500">
                     {/* Summary Snapshot Box */}
                     <div className="bg-slate-900/60 backdrop-blur-xl rounded-xl border border-white/10 p-3 mb-3 shadow-lg space-y-3">
