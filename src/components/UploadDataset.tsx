@@ -215,11 +215,63 @@ export default function UploadDataset() {
         has_result: true
       }));
 
+      // Trigger automatic download of the produced output.json for the user
+      try {
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${datasetId}_output.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      } catch (err) {
+        // Non-fatal: if download fails, we still keep the result in the UI
+        console.error('Failed to download output.json automatically', err);
+      }
+
     } catch (error: any) {
       setErrorMessage(error.message || "Processing failed");
       setStatus("processing_error");
       setIsProcessing(false);
     }
+  };
+
+  // Download the server-persisted output.json for this dataset (if available)
+  const handleDownloadServerOutput = async () => {
+    if (!datasetId) return;
+    setIsProcessing(true);
+    setErrorMessage("");
+    try {
+      const resp = await fetch(`http://localhost:8000/datasets/${datasetId}/output`);
+      if (!resp.ok) {
+        throw new Error(`Server responded ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${datasetId}_output.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('Download failed', err);
+      setErrorMessage(`Download failed: ${err.message || err}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Navigate to visualization page. The backend will run Poligras on-demand
+  // if output.json is missing (we added that behavior to the API).
+  const handleVisualizeNow = () => {
+    if (!datasetId) return;
+    sessionStorage.setItem('lastDatasetId', datasetId);
+    // Navigate to visualization route
+    window.location.href = '/visualize';
   };
 
   const resetUpload = () => {
@@ -433,6 +485,33 @@ export default function UploadDataset() {
                   Dataset ID: <span className="font-mono bg-slate-700/50 px-2 py-1 rounded text-xs">{datasetId}</span>
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* After upload, provide quick actions: Run, Visualize (runs on-demand), Download output if exists */}
+          {status === "upload_success" && !showConfig && (
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <button
+                onClick={() => setShowConfig(true)}
+                className="py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm"
+              >
+                Configure & Run
+              </button>
+
+              <button
+                onClick={handleVisualizeNow}
+                className="py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm"
+              >
+                Visualize Now
+              </button>
+
+              <button
+                onClick={handleDownloadServerOutput}
+                className="py-2 px-3 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm"
+                disabled={isProcessing}
+              >
+                Download output.json
+              </button>
             </div>
           )}
 
