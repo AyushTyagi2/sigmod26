@@ -31,6 +31,8 @@ export default function TimelineVisualizationPage() {
     const [latestSummarySnapshot, setLatestSummarySnapshot] = useState<PoligrasOutput["graphs"]["summary"] | null>(null);
     const [hasAppliedUpdates, setHasAppliedUpdates] = useState(false);
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
+    const readyForNextRef = useRef<boolean>(true);
+    const readyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const syncSummarySnapshots = useCallback((summaryGraph?: PoligrasOutput["graphs"]["summary"], isInitialLoad = false) => {
         if (!summaryGraph) return;
@@ -67,6 +69,7 @@ export default function TimelineVisualizationPage() {
                         setOutput(apiData);
                         if (apiData.timeline && apiData.timeline.length > 0) {
                             setActions(apiData.timeline);
+                            setCurrentStep(0); // Always start at step 0 on new dataset load
                         }
                         // This is the original uploaded data, always set as initial snapshot
                         syncSummarySnapshots(apiData.graphs?.summary, true);
@@ -93,28 +96,51 @@ export default function TimelineVisualizationPage() {
         };
     }, [syncSummarySnapshots]);
 
-    // Playback logic - 30fps maximum using setInterval
+    // Playback logic - ensure we only advance once the canvas has rendered the previous step
     useEffect(() => {
-        if (isPlaying && actions.length > 0) {
-            let lastTime = performance.now();
+        if (!isPlaying || actions.length === 0) return;
 
-            const timer = setInterval(() => {
-                const now = performance.now();
-                console.log(`[Playback] Step duration: ${(now - lastTime).toFixed(1)}ms`);
-                lastTime = now;
+        const totalSteps = actions.length;
 
-                setCurrentStep((prev) => {
-                    if (prev >= actions.length) {
-                        setIsPlaying(false);
-                        return prev;
-                    }
-                    return prev + 1;
-                });
-            }, 32); // ~30fps max
+        const safeSpeed = playbackSpeed > 0 ? playbackSpeed : 1;
+        const baseMs = 300; // base interval in ms for speed=1
+        const minMs = 100; // don't go below this to avoid overwhelming render loop
+        const intervalMs = Math.max(minMs, Math.round(baseMs / safeSpeed));
 
-            return () => clearInterval(timer);
-        }
-    }, [isPlaying, actions.length]);
+        const timer = setInterval(() => {
+            // Only advance when the canvas signalled it's ready
+            if (!readyForNextRef.current) return;
+
+            setCurrentStep((prev) => {
+                if (prev >= totalSteps) {
+                    setIsPlaying(false);
+                    return prev;
+                }
+                // Mark not ready until canvas notifies render-complete
+                readyForNextRef.current = false;
+
+                // Start a safety timeout so we don't hang if the canvas never responds
+                if (readyTimeoutRef.current) {
+                    clearTimeout(readyTimeoutRef.current);
+                }
+                readyTimeoutRef.current = setTimeout(() => {
+                    // eslint-disable-next-line no-console
+                    console.warn(`[Playback] readiness timeout expired for dataset=${datasetId}. Forcing next step readiness.`);
+                    readyForNextRef.current = true;
+                }, 2000); // 2s safety
+
+                return prev + 1;
+            });
+        }, intervalMs);
+
+        return () => {
+            clearInterval(timer);
+            if (readyTimeoutRef.current) {
+                clearTimeout(readyTimeoutRef.current);
+                readyTimeoutRef.current = null;
+            }
+        };
+    }, [isPlaying, actions.length, playbackSpeed]);
 
     const handlePlayPause = useCallback(() => {
         setIsPlaying((prev) => !prev);
@@ -129,6 +155,20 @@ export default function TimelineVisualizationPage() {
 
     const handleSpeedChange = useCallback((speed: number) => {
         setPlaybackSpeed(speed);
+    }, []);
+
+    // Stable callbacks for SigmaGraphCanvas to prevent re-initialization
+    const handleLayoutReady = useCallback(() => {
+        setIsCanvasReady(true);
+    }, []);
+
+    const handleStepRendered = useCallback(() => {
+        // Canvas painted the latest step: clear safety timeout and mark ready
+        if (readyTimeoutRef.current) {
+            clearTimeout(readyTimeoutRef.current);
+            readyTimeoutRef.current = null;
+        }
+        readyForNextRef.current = true;
     }, []);
 
     // Handle edge update applied - refresh the output with updated summary
@@ -195,7 +235,7 @@ export default function TimelineVisualizationPage() {
             const initialGraph = output.graphs.initial;
             const nodeCount = initialGraph.node_count;
             const edgeCount = initialGraph.edge_count;
-            
+
             return {
                 step_index: 0,
                 reward: 0, // No reward at initial state
@@ -206,13 +246,13 @@ export default function TimelineVisualizationPage() {
                 avg_degree: nodeCount > 0 ? (initialGraph.directed ? edgeCount / nodeCount : (2 * edgeCount) / nodeCount) : 0,
             };
         }
-        
+
         // For steps 1+, use the action's stats
         // actions[0] corresponds to step 1 (first merge)
         if (currentStep > 0 && currentStep <= actions.length) {
             return actions[currentStep - 1].stats;
         }
-        
+
         return null;
     })();
 
@@ -264,6 +304,115 @@ export default function TimelineVisualizationPage() {
     const summaryBeforeUpdates = initialSummarySnapshot ?? summaryGraph;
     const summaryAfterUpdates = hasAppliedUpdates ? (latestSummarySnapshot ?? summaryGraph) : null;
 
+    // Download helpers for server-side artifacts
+    const downloadServerOutput = async () => {
+        if (!datasetId) return;
+        try {
+            const resp = await fetch(`/api/datasets/${datasetId}/output`);
+            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${datasetId}_output.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to download output.json', err);
+            alert('Failed to download output.json');
+        }
+    };
+
+    const downloadSummaryPickle = async () => {
+        if (!datasetId) return;
+        try {
+            const resp = await fetch(`/api/datasets/${datasetId}/download-summary`);
+            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${datasetId}_graph_summary.gpickle`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to download summary pickle', err);
+            alert('Failed to download graph summary pickle');
+        }
+    };
+
+    const downloadCorrectionsCSV = async () => {
+        if (!datasetId) return;
+        try {
+            const resp = await fetch(`/api/datasets/${datasetId}/download-corrections`);
+            if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${datasetId}_corrections.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to download corrections CSV', err);
+            alert('Failed to download corrections CSV');
+        }
+    };
+
+    const downloadUpdatedSummaryPickle = async () => {
+        if (!datasetId) return;
+        try {
+            // Try dynamic endpoint first
+            let resp = await fetch(`/api/datasets/${datasetId}/download-updated-summary`);
+            if (!resp.ok) {
+                // Fallback to original
+                resp = await fetch(`/api/datasets/${datasetId}/download-summary`);
+                if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            }
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${datasetId}_graph_summary_dynamic.gpickle`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to download updated summary pickle', err);
+            alert('Failed to download updated graph summary');
+        }
+    };
+
+    const downloadUpdatedCorrectionsCSV = async () => {
+        if (!datasetId) return;
+        try {
+            let resp = await fetch(`/api/datasets/${datasetId}/download-updated-corrections`);
+            if (!resp.ok) {
+                resp = await fetch(`/api/datasets/${datasetId}/download-corrections`);
+                if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+            }
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${datasetId}_corrections_dynamic.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to download updated corrections CSV', err);
+            alert('Failed to download updated corrections CSV');
+        }
+    };
+
     const superedgeCountFor = (snapshot?: PoligrasOutput["graphs"]["summary"]) =>
         snapshot?.edge_count ?? stats.summary.superedges;
 
@@ -284,7 +433,8 @@ export default function TimelineVisualizationPage() {
                         actions={actions}
                         currentStep={currentStep}
                         onStepChange={handleStepChange}
-                        onLayoutReady={() => setIsCanvasReady(true)}
+                        onLayoutReady={handleLayoutReady}
+                        onStepRendered={handleStepRendered}
                     />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-500">
@@ -376,6 +526,10 @@ export default function TimelineVisualizationPage() {
                                     <p className="text-[10px] text-slate-500 uppercase">Corrections</p>
                                     <p className="text-lg font-bold text-purple-400">{correctionCountFor(summaryBeforeUpdates).toLocaleString()}</p>
                                 </div>
+                                <div className="mt-3 flex gap-2">
+                                    <button onClick={downloadSummaryPickle} className="bg-slate-700/60 hover:bg-slate-700 text-white px-2 py-1 rounded text-xs">Download summary.gpickle</button>
+                                    <button onClick={downloadCorrectionsCSV} className="bg-slate-700/60 hover:bg-slate-700 text-white px-2 py-1 rounded text-xs">Download corrections.csv</button>
+                                </div>
                             </div>
                         </div>
 
@@ -392,10 +546,14 @@ export default function TimelineVisualizationPage() {
                                         <p className="text-lg font-bold text-purple-400">{correctionCountFor(summaryAfterUpdates).toLocaleString()}</p>
                                     </div>
                                 </div>
+                                <div className="mt-3 flex gap-2">
+                                    <button onClick={downloadUpdatedSummaryPickle} className="bg-slate-700/60 hover:bg-slate-700 text-white px-2 py-1 rounded text-xs">Download summary (updated)</button>
+                                    <button onClick={downloadUpdatedCorrectionsCSV} className="bg-slate-700/60 hover:bg-slate-700 text-white px-2 py-1 rounded text-xs">Download corrections (updated)</button>
+                                </div>
                             </div>
                         )}
                     </div>
-                    
+
                     {/* Edge Update Panel */}
                     <EdgeUpdatePanel
                         datasetId={datasetId}

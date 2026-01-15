@@ -473,9 +473,9 @@ class PoligrasRunner(object):
 
                     membersB = self.superNodes_dict.get(B, [])
                     edge_weight = 0
-                    for n1 in membersA:
-                        for n2 in membersB:
-                            if self.init_graph.has_edge(n1, n2):
+                    for nodeA in membersA:
+                        for nodeB in membersB:
+                            if self.init_graph.has_edge(nodeA, nodeB):
                                 edge_weight += 1
 
                     possible_edges = len(membersA) * len(membersB)
@@ -486,9 +486,9 @@ class PoligrasRunner(object):
                 edge_AA = 0
                 members = list(membersA)
                 for i_idx in range(len(members)):
-                    n1 = members[i_idx]
-                    for n2 in members[i_idx + 1:]:
-                        if self.init_graph.has_edge(n1, n2):
+                    inner_n1 = members[i_idx]
+                    for inner_n2 in members[i_idx + 1:]:
+                        if self.init_graph.has_edge(inner_n1, inner_n2):
                             edge_AA += 1
 
                 possible_AA = len(members) * (len(members) - 1) / 2
@@ -784,6 +784,45 @@ class PoligrasRunner(object):
         )
         meta_payload = self._build_meta()
         artifacts_payload = self._build_artifacts(len(self_edge))
+
+        # Append a final timeline snapshot that reflects the encoded summary
+        # This ensures the timeline's last entry matches the summary counts
+        try:
+            final_step_index = len(self.timeline)
+            final_supernode_count = summary_graph_payload['node_count']
+            final_superedge_count = summary_graph_payload['edge_count']
+            final_node_count = self.init_graph.number_of_nodes()
+            denom = float(final_node_count + self.init_graph.number_of_edges())
+            final_summarisation_ratio = 0.0
+            if denom:
+                final_summarisation_ratio = (final_supernode_count + final_superedge_count) / denom
+
+            final_avg_degree = 0.0
+            if final_supernode_count > 0:
+                if self.init_graph.is_directed():
+                    final_avg_degree = final_superedge_count / float(final_supernode_count)
+                else:
+                    final_avg_degree = 2.0 * final_superedge_count / float(final_supernode_count)
+
+            self.timeline.append({
+                'n1': '',
+                'n2': '',
+                'stats': {
+                    'step_index': final_step_index,
+                    'reward': 0.0,
+                    'summarisation_ratio': float(final_summarisation_ratio),
+                    'node_count': int(final_node_count),
+                    'edge_count': int(final_superedge_count),
+                    'raw_edge_count': int(self.init_graph.number_of_edges()),
+                    'supernode_count': int(final_supernode_count),
+                    'superedge_count': int(final_superedge_count),
+                    'avg_degree': float(final_avg_degree),
+                },
+            })
+        except Exception:
+            # Non-fatal; timeline is auxiliary. If final snapshot cannot be built,
+            # continue without crashing the encode step.
+            pass
 
         result: PoligrasOutput = {
             'meta': meta_payload,

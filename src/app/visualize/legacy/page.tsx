@@ -65,6 +65,58 @@ export default function VisualizationPage() {
         return () => clearInterval(interval);
     }, [isPlaying, steps.length]);
 
+    // Download helpers for server-side artifacts
+    const downloadServerOutput = async () => {
+        try {
+            const resp = await fetch(`/api/datasets/${selectedDatasetId}/output`);
+            if (!resp.ok) throw new Error('Failed to fetch output.json');
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${selectedDatasetId}_output.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (err) {
+            console.error(err);
+            alert('Failed to download output.json');
+        }
+    };
+
+    const downloadSummaryPickle = async () => {
+        try {
+            const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-summary`);
+            if (!resp.ok) throw new Error('Failed to fetch summary pickle');
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${selectedDatasetId}_graph_summary.gpickle`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (err) {
+            console.error(err);
+            alert('Failed to download graph summary pickle');
+        }
+    };
+
+    const downloadCorrectionsCSV = async () => {
+        try {
+            const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-corrections`);
+            if (!resp.ok) throw new Error('Failed to fetch corrections CSV');
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${selectedDatasetId}_corrections.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (err) {
+            console.error(err);
+            alert('Failed to download corrections CSV');
+        }
+    };
+
     const handleDatasetChange = useCallback((id: string) => {
         setSelectedDatasetId(id);
         setCurrentStep(0);

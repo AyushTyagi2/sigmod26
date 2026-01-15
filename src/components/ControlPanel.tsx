@@ -142,6 +142,104 @@ export default function ControlPanel({
                     )}
                     <span>Corrections</span>
                 </button>
+                {/* Downloads: Corrections CSV + Summary PKL */}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={async () => {
+                            if (!selectedDatasetId) return alert('Select a dataset first');
+                            try {
+                                const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-corrections`);
+                                if (!resp.ok) throw new Error('Download failed');
+                                const blob = await resp.blob();
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `${selectedDatasetId}_corrections.csv`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                            } catch (err) {
+                                console.error(err);
+                                alert('Failed to download corrections CSV');
+                            }
+                        }}
+                        className="px-3 py-2 rounded-lg bg-[#2c2c2e] text-[#86868b] hover:text-[#f5f5f7] border border-[#3a3a3c] text-[13px] transition-colors"
+                        title="Download corrections CSV"
+                    >
+                        CSV
+                    </button>
+
+                    <button
+                        onClick={async () => {
+                            if (!selectedDatasetId) return alert('Select a dataset first');
+                            try {
+                                const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-summary`);
+                                if (!resp.ok) throw new Error('Download failed');
+                                const blob = await resp.blob();
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `${selectedDatasetId}_graph_summary.gpickle`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                            } catch (err) {
+                                console.error(err);
+                                alert('Failed to download summary pickle');
+                            }
+                        }}
+                        className="px-3 py-2 rounded-lg bg-[#2c2c2e] text-[#86868b] hover:text-[#f5f5f7] border border-[#3a3a3c] text-[13px] transition-colors"
+                        title="Download summary pickle"
+                    >
+                        PKL
+                    </button>
+                    {/* Updated / post-update downloads */}
+                    <button
+                        onClick={async () => {
+                            if (!selectedDatasetId) return alert('Select a dataset first');
+                            try {
+                                const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-updated-corrections`);
+                                if (!resp.ok) throw new Error('Download failed');
+                                const blob = await resp.blob();
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `${selectedDatasetId}_corrections_dynamic.csv`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                            } catch (err) {
+                                console.error(err);
+                                alert('Failed to download updated corrections CSV');
+                            }
+                        }}
+                        className="px-3 py-2 rounded-lg bg-[#2c2c2e] text-[#86868b] hover:text-[#f5f5f7] border border-[#3a3a3c] text-[13px] transition-colors"
+                        title="Download updated corrections CSV"
+                    >
+                        CSV (updated)
+                    </button>
+
+                    <button
+                        onClick={async () => {
+                            if (!selectedDatasetId) return alert('Select a dataset first');
+                            try {
+                                const resp = await fetch(`/api/datasets/${selectedDatasetId}/download-updated-summary`);
+                                if (!resp.ok) throw new Error('Download failed');
+                                const blob = await resp.blob();
+                                const a = document.createElement('a');
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `${selectedDatasetId}_graph_summary_dynamic.gpickle`;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                            } catch (err) {
+                                console.error(err);
+                                alert('Failed to download updated summary pickle');
+                            }
+                        }}
+                        className="px-3 py-2 rounded-lg bg-[#2c2c2e] text-[#86868b] hover:text-[#f5f5f7] border border-[#3a3a3c] text-[13px] transition-colors"
+                        title="Download updated summary pickle"
+                    >
+                        PKL (updated)
+                    </button>
+                </div>
             </div>
         </div>
     );

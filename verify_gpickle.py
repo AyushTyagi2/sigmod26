@@ -30,15 +30,48 @@ def verify_gpickle(file_path: str) -> None:
             data = pickle.load(f)
         
         # Handle different formats
+        graph = None
+        format_type = "NetworkX Graph"
+        
         if isinstance(data, dict) and 'G' in data:
+            # Poligras input format: {'G': NetworkX graph}
             graph = data['G']
+            format_type = "Poligras Input ({{G: graph}})"
+            print(f"\nDetected format: {format_type}")
+            print(f"Dictionary keys: {list(data.keys())}")
+        elif isinstance(data, dict) and 'superNodes_dict' in data:
+            # This is a Poligras summary dictionary, not a graph
+            print(f"\n{'='*60}")
+            print(f"Poligras Summary: {gpickle_path.name}")
+            print(f"{'='*60}")
+            print(f"Detected format: Poligras Summary Output")
+            print(f"Dictionary keys: {list(data.keys())}")
+            print(f"\nSuperNodes: {len(data.get('superNodes_dict', {}))}")
+            print(f"SuperEdges: {len(data.get('superEdge_list', []))}")
+            print(f"Self-loop edges: {len(data.get('self_edge_list', []))}")
+            print(f"Corrections (+): {len(data.get('correctionSet_plus_list', []))}")
+            print(f"Corrections (-): {len(data.get('correctionSet_minus_list', []))}")
+            
+            # Show sample supernode info
+            superNodes_dict = data.get('superNodes_dict', {})
+            if superNodes_dict:
+                sample_keys = list(superNodes_dict.keys())[:5]
+                print(f"\nSample supernodes (first 5):")
+                for key in sample_keys:
+                    members = superNodes_dict[key]
+                    print(f"  {key}: {len(members)} members")
+            
+            print(f"{'='*60}\n")
+            return True
         elif isinstance(data, dict):
             print(f"Dictionary keys: {list(data.keys())}")
-            graph = data
+            print("Unknown dictionary format - expected 'G' or 'superNodes_dict' key")
+            return False
         else:
             graph = data
+            format_type = "Raw NetworkX Graph"
         
-        # Extract statistics
+        # Extract statistics for NetworkX graph
         num_nodes = graph.number_of_nodes()
         num_edges = graph.number_of_edges()
         is_directed = nx.is_directed(graph)

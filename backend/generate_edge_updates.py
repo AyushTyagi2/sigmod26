@@ -82,18 +82,35 @@ def generate_edge_updates(output_path: str, num_updates: int = 20, insert_only: 
 
 
 if __name__ == "__main__":
-    # Path to output.json
-    script_dir = Path(__file__).parent
-    output_path = script_dir / "dataset" / "output.json"
+    import argparse
     
-    # Generate adversarial updates - 100 insert-only edges
-    updates = generate_edge_updates(str(output_path), num_updates=100, insert_only=True)
+    parser = argparse.ArgumentParser(description="Generate sample edge updates from output.json")
+    parser.add_argument("input_path", type=str, help="Path to output.json file")
+    parser.add_argument("--num-updates", "-n", type=int, default=100, help="Number of edge updates to generate (default: 100)")
+    parser.add_argument("--insert-only", "-i", action="store_true", help="Generate only insert updates (no deletions)")
+    parser.add_argument("--output", "-o", type=str, default=None, help="Output path for generated updates (default: same directory as input)")
+    
+    args = parser.parse_args()
+    
+    input_path = Path(args.input_path)
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}")
+        exit(1)
+    
+    # Generate updates
+    updates = generate_edge_updates(str(input_path), num_updates=args.num_updates, insert_only=args.insert_only)
+    
+    # Determine output path
+    if args.output:
+        output_file = Path(args.output)
+    else:
+        output_file = input_path.parent / "sample_edge_updates.json"
     
     # Save to file
-    output_file = script_dir / "dataset" / "sample_edge_updates.json"
     with open(output_file, 'w') as f:
         json.dump(updates, f, indent=2)
     
     print(f"\nSaved to: {output_file}")
     print("\nFirst 10 updates:")
     print(json.dumps({"updates": updates["updates"][:10]}, indent=2))
+

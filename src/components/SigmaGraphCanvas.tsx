@@ -23,6 +23,7 @@ interface SigmaGraphCanvasProps {
     currentStep: number;
     onStepChange?: (step: number) => void;
     onLayoutReady?: () => void;
+    onStepRendered?: () => void;
 }
 
 export default function SigmaGraphCanvas({
@@ -31,6 +32,7 @@ export default function SigmaGraphCanvas({
     actions,
     currentStep,
     onLayoutReady,
+    onStepRendered,
 }: SigmaGraphCanvasProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sigmaRef = useRef<Sigma | null>(null);
@@ -40,7 +42,7 @@ export default function SigmaGraphCanvas({
 
     const [sigmaReady, setSigmaReady] = useState(false);
 
-    // 1. Initialize Base Graph & Layout (Run ONCE)
+    // 1. Initialize Base Graph & Layout (Run ONCE per initialGraph)
     useEffect(() => {
         if (!initialGraph) return;
 
@@ -61,10 +63,15 @@ export default function SigmaGraphCanvas({
         });
 
         baseGraphRef.current = graph;
-        if (onLayoutReady) onLayoutReady();
+        lastStepRef.current = -1; // Reset step tracking when graph is re-initialized
+
+        // Call layout ready callback (stable reference expected)
+        onLayoutReady?.();
 
         return () => { };
-    }, [initialGraph, onLayoutReady]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialGraph]); // Intentionally exclude onLayoutReady - should only run when initialGraph changes
+
 
     // 2. Initialize Sigma
     useEffect(() => {
@@ -188,25 +195,32 @@ export default function SigmaGraphCanvas({
             return;
         }
 
-        // Forward Play - SYNCHRONOUS single step processing
+        // Forward Play - handle single-step and multi-step jumps by applying
+        // all intermediate actions between the previous step and the new one.
         if (currentStep > prevStep) {
             console.log(`[Canvas] Forward: ${prevStep} -> ${currentStep}`);
-            
+
             // Remove previous highlight
             if (lastHighlightedRef.current && graph.hasNode(lastHighlightedRef.current)) {
                 graph.setNodeAttribute(lastHighlightedRef.current, "isHighlighted", false);
                 updateSingleNodeVisuals(lastHighlightedRef.current);
             }
-            
+
             if (currentStep === 0) {
                 // Step 0: Just base graph, no actions applied
                 lastHighlightedRef.current = null;
             } else {
-                // Apply the action for this step (currentStep is 1-indexed)
-                // Step 1 means apply actions[0], Step 2 means apply actions[1], etc.
-                const actionIndex = currentStep - 1;
-                if (actionIndex >= 0 && actionIndex < actions.length) {
+                const startStep = prevStep + 1; // first step to apply (1-indexed)
+                const endStep = currentStep;    // inclusive (1-indexed)
+
+                for (let step = startStep; step <= endStep; step++) {
+                    const actionIndex = step - 1;
+                    if (actionIndex < 0 || actionIndex >= actions.length) continue;
                     const action = actions[actionIndex];
+
+                    // Debug: Log the actual action being applied
+                    console.log(`[Canvas] Applying step ${step}, actionIndex=${actionIndex}, action.n1=${action?.n1}, action.n2=${action?.n2}`);
+
                     const affected = applyMergeAction(graph, action);
 
                     // Update visuals only for affected nodes
@@ -214,12 +228,14 @@ export default function SigmaGraphCanvas({
                         if (graph.hasNode(node)) updateSingleNodeVisuals(node);
                     });
 
-                    // Highlight the merged node
-                    const n1 = String(action.n1);
-                    if (graph.hasNode(n1)) {
-                        graph.setNodeAttribute(n1, "isHighlighted", true);
-                        updateSingleNodeVisuals(n1);
-                        lastHighlightedRef.current = n1;
+                    // If this is the last applied action, highlight its target
+                    if (step === endStep) {
+                        const n1 = String(action.n1);
+                        if (graph.hasNode(n1)) {
+                            graph.setNodeAttribute(n1, "isHighlighted", true);
+                            updateSingleNodeVisuals(n1);
+                            lastHighlightedRef.current = n1;
+                        }
                     }
                 }
             }
@@ -254,11 +270,27 @@ export default function SigmaGraphCanvas({
 
         const beforeRefresh = performance.now();
         sigma.refresh();
+        // Ensure the browser had at least one paint opportunity before signalling render completion
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                try {
+                    if (typeof onStepRendered === "function") {
+                        // debug hook: inform parent that the canvas painted this step
+                        // console.debug helps trace the handshake without too much noise
+                        // eslint-disable-next-line no-console
+                        console.debug('[Canvas] step rendered, notifying parent');
+                        onStepRendered();
+                    }
+                } catch (e) {
+                    // swallow
+                }
+            });
+        });
         console.log(`[Canvas] sigma.refresh() took: ${(performance.now() - beforeRefresh).toFixed(1)}ms`);
         lastStepRef.current = currentStep;
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentStep, actions.length, sigmaReady]);
+    }, [currentStep, actions, sigmaReady]);
 
     return (
         <div className="relative w-full h-full flex flex-col">
