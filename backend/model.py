@@ -454,17 +454,59 @@ class PoligrasRunner(object):
             edge_count = self.curr_graph.number_of_edges()
             node_count = self.initial_node_count
 
+            # exact superedge count at this snapshot: mirror the logic used in `encode()`
+            finished_pair = set()
+            snapshot_superedge_count = 0
+            for A, membersA in self.superNodes_dict.items():
+                iterative_superNode = []
+                for init_n in membersA:
+                    for nei_n in self.init_graph[init_n]:
+                        iterative_superNode.append(self.node_belonging[nei_n])
+
+                for B in set(iterative_superNode):
+                    if A == B:
+                        continue
+                    pair_key = tuple(sorted((A, B)))
+                    if pair_key in finished_pair:
+                        continue
+                    finished_pair.add(pair_key)
+
+                    membersB = self.superNodes_dict.get(B, [])
+                    edge_weight = 0
+                    for n1 in membersA:
+                        for n2 in membersB:
+                            if self.init_graph.has_edge(n1, n2):
+                                edge_weight += 1
+
+                    possible_edges = len(membersA) * len(membersB)
+                    if possible_edges and (edge_weight > (possible_edges / 2.0)):
+                        snapshot_superedge_count += 1
+
+                # internal edges within A (A == A case)
+                edge_AA = 0
+                members = list(membersA)
+                for i_idx in range(len(members)):
+                    n1 = members[i_idx]
+                    for n2 in members[i_idx + 1:]:
+                        if self.init_graph.has_edge(n1, n2):
+                            edge_AA += 1
+
+                possible_AA = len(members) * (len(members) - 1) / 2
+                # encode() treats internal supernode threshold differently (<= possible/4 -> corrections)
+                if possible_AA and (edge_AA > (possible_AA / 4.0)):
+                    snapshot_superedge_count += 1
+
             denom = float(self.initial_node_count + self.initial_edge_count)
             summarisation_ratio = 0.0
             if denom:
-                summarisation_ratio = (supernode_count + edge_count) / denom
+                summarisation_ratio = (supernode_count + snapshot_superedge_count) / denom
 
             avg_degree = 0.0
             if supernode_count > 0:
                 if self.init_graph.is_directed():
-                    avg_degree = edge_count / float(supernode_count)
+                    avg_degree = snapshot_superedge_count / float(supernode_count)
                 else:
-                    avg_degree = 2.0 * edge_count / float(supernode_count)
+                    avg_degree = 2.0 * snapshot_superedge_count / float(supernode_count)
 
             self.timeline.append({
                 'n1': str(self._coerce_node_id(n1)),
@@ -474,11 +516,17 @@ class PoligrasRunner(object):
                     'reward': float(curr_reward),
                     'summarisation_ratio': float(summarisation_ratio),
                     'node_count': int(node_count),
-                    'edge_count': int(edge_count),
+                    'edge_count': int(snapshot_superedge_count),
+                    'raw_edge_count': int(edge_count),
                     'supernode_count': int(supernode_count),
+                    'superedge_count': int(snapshot_superedge_count),
                     'avg_degree': float(avg_degree),
                 },
             })
+            # Log snapshot with exact superedge count (replaces pseudo edge-count logging)
+            print('Step {}: supernodes={}, edges={}, superedges={}'.format(
+                step_index, supernode_count, edge_count, snapshot_superedge_count
+            ))
 
         return curr_reward
 

@@ -3,7 +3,10 @@ from types import SimpleNamespace
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+import tempfile
+import csv
+import networkx as nx
 from pydantic import BaseModel, Field
 from .node_feature_generation import feature_generator
 import shutil
@@ -176,8 +179,38 @@ async def get_dataset_output(dataset_id: str):
         dataset_dir = Path(__file__).parent / "dataset" / dataset_id
         output_path = dataset_dir / "output.json"
 
+        # If output.json is missing but the uploaded graph exists, run Poligras
+        # synchronously so the first visualization request can obtain the
+        # generated output. This covers the common case where a user uploads
+        # graph files and is immediately routed to the visualization page.
         if not output_path.exists():
-            raise HTTPException(404, "Output not found for this dataset")
+            # graph file uploaded by `upload_multiple_files` is saved as
+            # `{dataset_id}_graph` (pickle). If it's present, we can run Poligras.
+            graph_path = dataset_dir / f"{dataset_id}_graph"
+            feat_path = dataset_dir / f"{dataset_id}_feat"
+
+            if graph_path.exists():
+                # Build default args (matches defaults in run.parse_args)
+                args = SimpleNamespace(
+                    dataset=dataset_id,
+                    counts=100,
+                    group_size=200,
+                    hidden_size1=64,
+                    hidden_size2=32,
+                    lr=0.001,
+                    dropout=0.0,
+                    weight_decay=0.0,
+                    bad_counter=0,
+                )
+
+                # Run Poligras synchronously and write output.json
+                result = run_poligras(args)
+                if result is None:
+                    raise HTTPException(500, "Poligras completed but returned no output")
+
+                # After run_poligras, output.json should exist; fall through to read it
+            else:
+                raise HTTPException(404, "Output not found for this dataset")
 
         with open(output_path, "r", encoding="utf-8") as f:
             data = json.load(f)

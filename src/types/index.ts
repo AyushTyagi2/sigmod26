@@ -102,6 +102,8 @@ export interface ActionStats {
     reward: number;
     summarisation_ratio: number;
     node_count: number;
+    // Number of edges at this step. After backend changes, this represents
+    // the number of "superedges" (compressed edges) at the snapshot.
     edge_count: number;
     supernode_count: number;
     avg_degree: number;

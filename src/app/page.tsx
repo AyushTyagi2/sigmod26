@@ -13,9 +13,7 @@ export default function Home() {
             Poligras
           </h1>
           <p className="text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
-            Interactive visualization for <span className="text-blue-400">Policy-based</span>{" "}
-            <span className="text-purple-400">Lossless Graph Summarization</span>.
-            Watch your graphs compress in real-time using the MDL principle.
+            Interactive visualization for <span className="text-blue-400">Policy-based Graph Summarization</span>.
           </p>
         </div>
 
@@ -27,9 +25,9 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-white mb-2">Real-time Animation</h3>
+            <h3 className="text-lg font-semibold text-white mb-2">Visualization Animation</h3>
             <p className="text-sm text-slate-400">
-              Watch supernodes merge step-by-step with smooth transitions.
+              Smooth, step-by-step animation of graph summarization.
             </p>
           </div>
           <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700">
@@ -38,9 +36,9 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-white mb-2">MDL Metrics</h3>
+            <h3 className="text-lg font-semibold text-white mb-2">Summarization Metrics</h3>
             <p className="text-sm text-slate-400">
-              Track compression ratio and storage cost live.
+              Metrics: summarization ratio, average degree, compression percentage, and more.
             </p>
           </div>
           <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700">
@@ -50,9 +48,9 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-white mb-2">Correction Overlay</h3>
+            <h3 className="text-lg font-semibold text-white mb-2">Edge Updation</h3>
             <p className="text-sm text-slate-400">
-              Visualize C+ and C- edges for lossless reconstruction.
+              Visualize edge updates and changes without dynamic edge update algorithm.
             </p>
           </div>
         </div>
@@ -70,7 +68,7 @@ export default function Home() {
 
         {/* Footer */}
         <p className="text-sm text-slate-500 mt-12">
-          SIGMOD 2026 Demo • Built with Next.js + Cytoscape.js
+          SIGMOD 2026 Demo • Built with Next.js + Sigma.js
         </p>
       </main>
     </div>
